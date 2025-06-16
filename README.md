@@ -1,2 +1,1 @@
-# firmware
-CivicAlert Firmware Repository
+# CivicAlert Gunshot Locator Firmware Repository
