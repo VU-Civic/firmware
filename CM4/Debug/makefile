@@ -62,8 +62,8 @@ all: main-build
 main-build: CivicAlert_CM4.elf secondary-outputs
 
 # Tool invocations
-CivicAlert_CM4.elf CivicAlert_CM4.map: $(OBJS) $(USER_OBJS) /Volumes/External\ HD/Dropbox/work/CIVIC/CivicAlert/firmware/CM4/STM32H745ZITX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "CivicAlert_CM4.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"/Volumes/External HD/Dropbox/work/CIVIC/CivicAlert/firmware/CM4/STM32H745ZITX_FLASH.ld" --specs=nosys.specs -Wl,-Map="CivicAlert_CM4.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+CivicAlert_CM4.elf CivicAlert_CM4.map: $(OBJS) $(USER_OBJS) /Volumes/External\ Drive/Dropbox/work/CIVIC/CivicAlert/firmware/CM4/STM32H745ZITX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "CivicAlert_CM4.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"/Volumes/External Drive/Dropbox/work/CIVIC/CivicAlert/firmware/CM4/STM32H745ZITX_FLASH.ld" --specs=nosys.specs -Wl,-Map="CivicAlert_CM4.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
