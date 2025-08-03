@@ -11,7 +11,6 @@
 #define PAGE_CFG_REG      0x00
 #define SW_RESET_REG      0x01
 #define SLEEP_CFG_REG     0x02
-#define SHDN_CFG_REG      0x05
 #define ASI_CFG0_REG      0x07
 #define ASI_CFG1_REG      0x08
 #define ASI_CFG2_REG      0x09
@@ -19,10 +18,6 @@
 #define ASI_CH2_REG       0x0C
 #define ASI_CH3_REG       0x0D
 #define ASI_CH4_REG       0x0E
-#define ASI_CH5_REG       0x0F
-#define ASI_CH6_REG       0x10
-#define ASI_CH7_REG       0x11
-#define ASI_CH8_REG       0x12
 #define MST_CFG0_REG      0x13
 #define MST_CFG1_REG      0x14
 #define ASI_STS_REG       0x15
@@ -31,13 +26,17 @@
 #define PDMIN_CFG_REG     0x20
 #define GPIO_CFG0_REG     0x21
 #define GPO_CFG0_REG      0x22
-#define GPO_CFG1_REG      0x23
-#define GPO_CFG2_REG      0x24
-#define GPO_CFG3_REG      0x25
+#if REV_ID == REV_A
+  #define GPO_CFG1_REG    0x23
+  #define GPO_CFG2_REG    0x24
+  #define GPO_CFG3_REG    0x25
+#endif
 #define GPO_VAL_REG       0x29
 #define GPIO_MON_REG      0x2A
 #define GPI_CFG0_REG      0x2B
-#define GPI_CFG1_REG      0x2C
+#if REV_ID == REV_A
+  #define GPI_CFG1_REG    0x2C
+#endif
 #define GPI_MON_REG       0x2F
 #define INT_CFG_REG       0x32
 #define INT_MASK0_REG     0x33
@@ -59,22 +58,6 @@
 #define CH4_CFG2_REG      0x4D
 #define CH4_CFG3_REG      0x4E
 #define CH4_CFG4_REG      0x4F
-#define CH5_CFG0_REG      0x50
-#define CH5_CFG2_REG      0x52
-#define CH5_CFG3_REG      0x53
-#define CH5_CFG4_REG      0x54
-#define CH6_CFG0_REG      0x55
-#define CH6_CFG2_REG      0x57
-#define CH6_CFG3_REG      0x58
-#define CH6_CFG4_REG      0x59
-#define CH7_CFG0_REG      0x5A
-#define CH7_CFG2_REG      0x5C
-#define CH7_CFG3_REG      0x5D
-#define CH7_CFG4_REG      0x5E
-#define CH8_CFG0_REG      0x5F
-#define CH8_CFG2_REG      0x61
-#define CH8_CFG3_REG      0x62
-#define CH8_CFG4_REG      0x63
 #define DSP_CFG0_REG      0x6B
 #define DSP_CFG1_REG      0x6C
 #define IN_CH_EN_REG      0x73
@@ -136,6 +119,8 @@ void MDMA_IRQHandler(void)
 
 static void audio_write_reg(uint8_t reg, uint8_t data)
 {
+#if REV_ID == REV_A
+
    // Write the single data byte to the indicated register using SPI
    const uint8_t xfer_buffer[2] = { (reg << 1) & 0xFE, data };
    volatile uint16_t *ptxdr_16bits = (volatile uint16_t*)&(SPI2->TXDR);
@@ -147,6 +132,12 @@ static void audio_write_reg(uint8_t reg, uint8_t data)
    while (!READ_BIT(SPI2->SR, SPI_FLAG_EOT));
    CLEAR_BIT(SPI2->CR1, SPI_CR1_SPE);
    SET_BIT(SPI2->IFCR, SPI_IFCR_EOTC | SPI_IFCR_TXTFC | SPI_IFCR_UDRC | SPI_IFCR_OVRC | SPI_IFCR_MODFC | SPI_IFCR_TIFREC);
+
+#else
+
+   // TODO: Implement I2C comms
+
+#endif
 }
 
 
@@ -160,6 +151,8 @@ void audio_init(void)
    gps_trigger_states[AUDIO_NUM_DMAS_PER_CLIP - 1] = GPS_TIME_TRIGGER_Pin;
    for (uint32_t i = 0; i < AUDIO_NUM_DMAS_PER_CLIP - 1; ++i)
       gps_trigger_states[i] = (uint32_t)GPS_TIME_TRIGGER_Pin << 16U;
+
+   // TODO: FIX ALL GPIO INIT STUFF FOR REVB USING I2C
 
    // Initialize the various GPIO clocks
    SET_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOAEN);
@@ -364,8 +357,10 @@ void audio_init(void)
 
    // Allow chip voltage to stabilize, then wake up the audio chip
    HAL_Delay(500);
+#if REV_ID == REV_A
    MICS_NRESET_GPIO_Port->BSRR = MICS_NRESET_Pin;
    HAL_Delay(2);
+#endif
    audio_write_reg(SLEEP_CFG_REG, 0b00000001);
    HAL_Delay(2);
 
@@ -374,6 +369,15 @@ void audio_init(void)
 
    // Setup the internal regulator and VREF voltage
    audio_write_reg(BIAS_CFG_REG, 0x62);
+
+   // Configure device to operate in slave mode
+   audio_write_reg(MST_CFG0_REG, 0b00000110);
+
+   // Set audio serial format to TDM and data word length to 16 bits
+   audio_write_reg(ASI_CFG0_REG, 0b00000000);
+
+   // Configure data offset from FSYNC as 1 cycle
+   audio_write_reg(ASI_CFG1_REG, 0b00000001);
 
    // Disable bus error detection and shutdown
    audio_write_reg(ASI_CFG2_REG, 0b00100000);
@@ -387,39 +391,32 @@ void audio_init(void)
    audio_write_reg(DSP_CFG1_REG, 0b10000000);
 
    // Disable unused GPIO pins and configure used PDM pins
+#if REV_ID == REV_A
    audio_write_reg(GPIO_CFG0_REG, 0x00);
    audio_write_reg(GPO_CFG0_REG, 0x41);
    audio_write_reg(GPO_CFG1_REG, 0x41);
-   audio_write_reg(GPO_CFG2_REG, 0x00);
-   audio_write_reg(GPO_CFG3_REG, 0x00);
+#else
+   audio_write_reg(GPIO_CFG0_REG, 0x41);
+   audio_write_reg(GPO_CFG0_REG, 0x41);
+#endif
    audio_write_reg(GPI_CFG0_REG, 0x54);
-   audio_write_reg(GPI_CFG1_REG, 0x00);
-
-   // Configure enabled channels 1-4
-   audio_write_reg(IN_CH_EN_REG, 0b11110000);
-   audio_write_reg(ASI_OUT_CH_EN_REG, 0b11110000);
-
-   // Configure device to operate in slave mode
-   audio_write_reg(MST_CFG0_REG, 0b00000111);
 
    // Configure PDM clock to output at 3.072MHz and latch on the appropriate edges
-   audio_write_reg(PDMCLK_CFG_REG, 0x00);
-   audio_write_reg(PDMIN_CFG_REG, 0xF0);
+   audio_write_reg(PDMCLK_CFG_REG, 0x40);
+   audio_write_reg(PDMIN_CFG_REG, 0xC0);
 
-   // Configure output channel slot assignments:
+   // Configure output channel slot assignments
    audio_write_reg(ASI_CH1_REG, 0x00);
    audio_write_reg(ASI_CH2_REG, 0x01);
    audio_write_reg(ASI_CH3_REG, 0x02);
    audio_write_reg(ASI_CH4_REG, 0x03);
 
-   // Set audio serial format to TDM and data word length to 16 bits
-   audio_write_reg(ASI_CFG0_REG, 0b00000000);
-
-   // Configure data offset from FSYNC as 1 cycle
-   audio_write_reg(ASI_CFG1_REG, 0b00000001);
+   // Configure enabled channels 1-4
+   audio_write_reg(IN_CH_EN_REG, 0b11110000);
+   audio_write_reg(ASI_OUT_CH_EN_REG, 0b11110000);
 
    // Power up all enabled audio channels
-   audio_write_reg(PWR_CFG_REG, 0b01100000);
+   audio_write_reg(PWR_CFG_REG, 0b01100100);
 
    // Update metadata for the data structure shared between cores
    data.audio_clip_complete = data.audio_read_index = 0;
