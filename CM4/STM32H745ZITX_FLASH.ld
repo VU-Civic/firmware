@@ -44,7 +44,8 @@ _Min_Stack_Size = 0x400; /* required amount of stack */
 MEMORY
 {
   RAM_SHARED (rw)  : ORIGIN = 0x24000000, LENGTH = 128K
-  FLASH (rx)       : ORIGIN = 0x08100000, LENGTH = 1024K
+  FLASH (rx)       : ORIGIN = 0x08100000, LENGTH = 896K
+  USER_FLASH (r)   : ORIGIN = 0x081E0000, LENGTH = 128K
   RAM (xrw)        : ORIGIN = 0x10000000, LENGTH = 288K
   RAM_D3 (xrw)     : ORIGIN = 0x38000000, LENGTH = 64K
 }
@@ -67,6 +68,14 @@ SECTIONS
     KEEP (*(.ramd3))
     . = ALIGN(4);
   } >RAM_D3
+  
+  /* Flash area for user non-volatile storage */
+  .user_nvm :
+  {
+    . = ALIGN(4);
+    KEEP (*(.user_nvm))
+    . = ALIGN(4);
+  } >USER_FLASH
     
   /* The startup code goes first into FLASH */
   .isr_vector :
@@ -178,8 +187,6 @@ SECTIONS
     . = . + _Min_Stack_Size;
     . = ALIGN(8);
   } >RAM
-
-
 
   /* Remove information from the standard libraries */
   /DISCARD/ :

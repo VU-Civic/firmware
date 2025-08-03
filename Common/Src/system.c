@@ -8,6 +8,9 @@
 
 // Shared Application Variables for Both Cores -------------------------------------------------------------------------
 
+__attribute__((section (".user_nvm")))
+non_volatile_data_t non_volatile_data;
+
 __attribute__((section (".data_packet")))
 volatile data_packet_t data;
 
@@ -94,6 +97,82 @@ void SysTick_Handler(void) { HAL_IncTick(); }  // TODO: Let's get rid of HAL alt
 void chip_reset(void)
 {
    // TODO: Implement this (also prob should activate some sort of watchdog timer)
+}
+
+non_volatile_data_t chip_read_non_volatile(void)
+{
+   // Ensure that the data being read represents the most currently stored data
+   non_volatile_data_t nvm_data = non_volatile_data;
+   __DSB();
+   return nvm_data;
+}
+
+void chip_save_non_volatile(const non_volatile_data_t *nvm_data)
+{
+   // TODO: TEST THIS
+   // Determine which flash sector the user memory lies in
+   uint32_t sector, flash_address = (uint32_t)&non_volatile_data;
+   if ((flash_address < 0x08120000) && (flash_address >= 0x08100000))
+      sector = FLASH_SECTOR_0;
+   else if ((flash_address < 0x08140000) && (flash_address >= 0x08120000))
+      sector = FLASH_SECTOR_1;
+   else if ((flash_address < 0x08160000) && (flash_address >= 0x08140000))
+      sector = FLASH_SECTOR_2;
+   else if ((flash_address < 0x08180000) && (flash_address >= 0x08160000))
+      sector = FLASH_SECTOR_3;
+   else if ((flash_address < 0x081A0000) && (flash_address >= 0x08180000))
+      sector = FLASH_SECTOR_4;
+   else if ((flash_address < 0x081C0000) && (flash_address >= 0x081A0000))
+      sector = FLASH_SECTOR_5;
+   else if ((flash_address < 0x081E0000) && (flash_address >= 0x081C0000))
+      sector = FLASH_SECTOR_6;
+   else
+      sector = FLASH_SECTOR_7;
+
+   // Unlock the flash memory bank and clear any pending interrupts
+   // TODO: DO I NEED TO UNLOCK BANK 1???
+   /*if (READ_BIT(FLASH->CR1, FLASH_CR_LOCK))
+   {
+      WRITE_REG(FLASH->KEYR1, FLASH_KEY1);
+      WRITE_REG(FLASH->KEYR1, FLASH_KEY2);
+   }*/
+   if (READ_BIT(FLASH->CR2, FLASH_CR_LOCK))
+   {
+      WRITE_REG(FLASH->KEYR2, FLASH_KEY1);
+      WRITE_REG(FLASH->KEYR2, FLASH_KEY2);
+   }
+   WRITE_REG(FLASH->CCR2, ((FLASH_SR_EOP | FLASH_SR_OPERR | FLASH_SR_WRPERR | FLASH_SR_PGSERR) & 0x7FFFFFFFU));
+
+   // Erase the user flash sector
+   CLEAR_BIT(FLASH->CR2, (FLASH_CR_PSIZE | FLASH_CR_SNB));
+   SET_BIT(FLASH->CR2, (FLASH_CR_SER | VOLTAGE_RANGE_3 | (sector << FLASH_CR_SNB_Pos) | FLASH_CR_START));
+   while (__HAL_FLASH_GET_FLAG_BANK2(FLASH_FLAG_QW_BANK2));
+   __HAL_FLASH_CLEAR_FLAG_BANK2(FLASH_FLAG_EOP_BANK2);
+   CLEAR_BIT(FLASH->CR2, (FLASH_CR_SER | FLASH_CR_SNB));
+
+   // Program the user flash sector word by word and re-lock the flash
+   volatile uint32_t *src_addr = (volatile uint32_t*)nvm_data;
+   volatile uint32_t *const end_addr = src_addr + sizeof(non_volatile_data_t);
+   while (src_addr < end_addr)
+   {
+      volatile uint32_t *dest_addr = (volatile uint32_t*)flash_address;
+      while (__HAL_FLASH_GET_FLAG_BANK2(FLASH_FLAG_QW_BANK2));
+      __HAL_FLASH_CLEAR_FLAG_BANK2(FLASH_FLAG_EOP_BANK2);
+      SET_BIT(FLASH->CR2, FLASH_CR_PG);
+      __ISB(); __DSB();
+      for (uint8_t row_index = FLASH_NB_32BITWORD_IN_FLASHWORD; row_index; --row_index)
+      {
+         *dest_addr = *src_addr;
+         dest_addr++;
+         src_addr++;
+      }
+      __ISB(); __DSB();
+      while (__HAL_FLASH_GET_FLAG_BANK2(FLASH_FLAG_QW_BANK2));
+      __HAL_FLASH_CLEAR_FLAG_BANK2(FLASH_FLAG_EOP_BANK2);
+      CLEAR_BIT(FLASH->CR2, FLASH_CR_PG);
+      flash_address += 32;
+   }
+   SET_BIT(FLASH->CR2, FLASH_CR_LOCK);
 }
 
 void cpu_init(void)

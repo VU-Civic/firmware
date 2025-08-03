@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "main.h"
+#include "revisions.h"
 
 
 // Custom Application Definitions --------------------------------------------------------------------------------------
@@ -80,9 +81,15 @@ typedef struct __attribute__ ((__packed__, aligned(4)))
    uint8_t signal_power, signal_quality;
 } event_message_t;
 
+typedef struct __attribute__ ((__packed__, aligned(32)))
+{
+   uint8_t mqtt_device_info_qos, mqtt_alert_qos, mqtt_audio_qos;
+} non_volatile_data_t;
+
 
 // Shared Application Variables for Both Cores -------------------------------------------------------------------------
 
+extern non_volatile_data_t non_volatile_data;
 extern volatile data_packet_t data;
 
 
