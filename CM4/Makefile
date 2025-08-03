@@ -8,6 +8,10 @@ SIZE_OUTPUT := default.size.stdout
 OBJDUMP_LIST := $(BUILD)/$(TARGET).list
 LINKER_FILE := STM32H745ZITX_FLASH.ld
 
+ifndef BOARD_REV
+$(error You must specify a BOARD_REV to continue)
+endif
+
 CPU := cortex-m4
 FPU := fpv4-sp-d16
 FABI := hard
@@ -17,8 +21,9 @@ SIZE := arm-none-eabi-size
 OBJDUMP := arm-none-eabi-objdump
 MKDIR := mkdir -p
 RM := rm -rf
+FLASH := STM32_Programmer_CLI
 
-DEFINES := -DCORE_CM4 -DUSE_HAL_DRIVER -DSTM32H745xx -DUSE_PWR_LDO_SUPPLY -DUSBD_MAX_POWER=250
+DEFINES := -DCORE_CM4 -DUSE_HAL_DRIVER -DSTM32H745xx -DUSE_PWR_LDO_SUPPLY -DUSBD_MAX_POWER=250 -DBOARD_REV=$(BOARD_REV)
 
 VPATH := ../Common/Src Core/Src Core/Startup ../Drivers/STM32H7xx_HAL_Driver/Src ../Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Src ../Middlewares/ST/STM32_USB_Device_Library/Core/Src
 INCLUDES := -I../Common/Inc -ICore/Inc -I../Drivers/STM32H7xx_HAL_Driver/Inc -I../Drivers/CMSIS/Include -I../Drivers/CMSIS/Device/ST/STM32H7xx/Include -I../Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc -I../Middlewares/ST/STM32_USB_Device_Library/Core/Inc
@@ -64,4 +69,7 @@ $(BUILD)/%.o: %.c
 clean:
 	-$(RM) $(BUILD)
 
-.PHONY: all directories secondary-outputs clean
+flash: all
+	$(FLASH) -c port=SWD mode=UR -d $(EXECUTABLE) 0x08100000 -v
+
+.PHONY: all directories secondary-outputs clean flash
