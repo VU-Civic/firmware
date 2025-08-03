@@ -62,7 +62,7 @@ command-line tool to your `PATH` to make it accessible from a terminal. For MacO
 following directory should be added to the `PATH`:
 
 ```
-/Applications/STMicroelectronics/STM32Cube/STM32CubeProgrammer/STM32CubeProgrammer.app/Contents/MacOs/bin/STM32_Programmer_CLI
+/Applications/STMicroelectronics/STM32Cube/STM32CubeProgrammer/STM32CubeProgrammer.app/Contents/MacOs/bin
 ```
 
 To flash the firmware using the graphical tool:
@@ -103,12 +103,12 @@ To address the first two design goals, all computational tasks are time-aligned 
 from incoming audio samples at 96kHz. In other words, it is the reception of predefined numbers of
 audio samples that trigger subsequent tasks and not real-time clocks or hardware-based timers.
 Specifically, a hardware "SAI" peripheral is coupled with DMA to collect incoming 4-channel audio
-samples in the background and automatically trigger a different "MDMA" hardware peripheral to
-change the state of an external GPIO line upon reception of 32,000 audio samples. The GPIO line
-states are stored in a 12-value value buffer, with all values being 0 except for the 1st value
-which is a 1. This GPIO line is connected to a "hardware timestamp trigger" line on an external
-GNSS chip which can determine the precise nanosecond-scale time when this GPIO line goes from low
-(0) to high (1). Since this line is automatically toggled high by hardware upon every 12th reception
+samples in the background and automatically trigger an "MDMA" hardware peripheral to change the
+state of an external GPIO line upon reception of 32,000 audio samples. The GPIO line states are
+stored in a 12-value circular buffer, with all values being 0 except for the 1st value which is
+a 1. This GPIO line is connected to a "hardware timestamp trigger" line on an external GNSS chip
+which can determine the precise nanosecond-scale time when this GPIO line toggles from low (0)
+to high (1). Since this line is automatically toggled high by hardware upon every 12th reception
 of 32,000 samples, this provides an almost 0-latency way of timestamping reception of the first
 sample of 1 continuous second of audio.
 
@@ -118,7 +118,7 @@ such that each audio channel is stored contiguously directly into the 0-wait-sta
 CM7 (high performance) core of the microcontroller. This is done completely in the background by
 hardware, and upon completion, two additional tasks are triggered:
 
-1. The CM7 CPU core is woken up to begin event detection and angle of arrival calculation for any detected events
+1. The CM7 CPU core is awoken to begin event detection and angle of arrival calculation for any detected events
 2. Another MDMA hardware transfer is initiated to copy a single audio channel from the CM7 cache to a location accessible by the CM4 core
 
 This awaking of the CM7 core represents the first CPU interaction required by the firmware, and it
@@ -127,7 +127,7 @@ for this core to complete its event detection algorithms before the next batch o
 for processing. Upon completion of event detection, any detected events are sent to the CM4 core
 via a hardware interrupt, and likewise, when the MDMA transfer of the single audio channel from CM7
 to CM4 is complete, a CM4 hardware interrupt will occur. This allows the CM4 core to store the
-received data into an appropriate location for further processing in the future.
+received data into an appropriate location for further future processing.
 
 Completely asynchronously to the above, a 9-DOF IMU will transfer the current orientation of the
 sensor in an Earth-oriented coordinate frame using quaternions once per second. This transfer
@@ -142,35 +142,34 @@ Since all of these various processes take place using hardware triggers, the CM4
 woken up only twice per handling of each 32,000-sample audio chunk, once when the CM7-to-CM4 audio
 buffer transfer is complete and once when the CM7 event detection algorithm is complete. When the
 CM4 core is awoken, it checks to see if 1) the CM7-to-CM4 core transfer has completed and 2) the
-event detection algorithm has completed. If so, then an audio data packet is transferred out over
+event detection algorithm has completed. If so, then an audio data packet is transferred over
 USB for debugging and monitoring purposes and over SPI to an external AI processing chip for
 classification of the detected events as either gunshots or some other type of acoustic event.
 This packet includes the most recent metadata about the location and orientation of the sensor,
 as well as the timestamp of the first audio sample in the previous second of audio. This metadata
 also contains a boolean flag which is set to `true` if the GNSS GPIO trigger line is currently
 high when the packet is transmitted. This flag is used to indicate that the timestamp in the
-metadata accurately corresponds to the first sample in the previous second of audio that has been
-received. If this flag is not set, then the timestamp in the metadata should be ignored.
+metadata accurately corresponds to the first sample in the previous second of audio. If this flag
+is not set, then the timestamp in the metadata should be ignored.
 
 Whenever the external AI chip finishes its classification procedure, it will transmit a shot alert
 packet back to the CM4 core using SPI and DMA, and the CM4 core will transmit this packet out over
-the cellular network by using UART and DMA to send the data to the cellular modem.
+the cellular network using UART and DMA.
 
-The following graphic outlines the data flow described above from both a logical point of view,
-where reddish-orange boxes indicate operations that take place entirely in hardware, green boxes
-take place entirely on either the CM4 or CM7 CPU core, and all other color boxes represent data
+The following graphic outlines the data flow described above from a logical point of view, where
+reddish-orange boxes indicate operations that take place entirely in hardware, green boxes take
+place entirely on either the CM4 or CM7 CPU core, and all other colored boxes represent data
 being transferred between the various hardware entities. All items encircled by a dotted line
 represent data sources that are external to the STM32H745 microcontroller:
 
 ![Firmware Logical Data Flow](Docs/images/LogicalDataFlow.png "Firmware Logical Data Flow")
 
 Another useful way to visualize the flow of data in this firmware design is temporally, as shown
-in the following graphic:
+in the following graphic. This shows the typical timing requirements for the flow of data through
+the various hardware components, as well as the maximum amount of time available for completion
+of the various CPU-based algorithms:
 
 ![Firmware Temporal Data Flow](Docs/images/TemporalDataFlow.png "Firmware Temporal Data Flow")
-
-This shows the typical timing requirements for the flow of data through the various hardware
-components, as well as the maximum amount of time available to the various CPU-based algorithms.
 
 
 ## TODO Items
