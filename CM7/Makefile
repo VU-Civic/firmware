@@ -9,7 +9,7 @@ OBJDUMP_LIST := $(BUILD)/$(TARGET).list
 LINKER_FILE := STM32H745ZITX_FLASH.ld
 
 ifndef BOARD_REV
-$(error You must specify a BOARD_REV to continue)
+$(error You must specify a BOARD_REV (A, B, etc) to continue)
 endif
 
 CPU := cortex-m7
@@ -23,7 +23,7 @@ MKDIR := mkdir -p
 RM := rm -rf
 FLASH := STM32_Programmer_CLI
 
-DEFINES := -DCORE_CM7 -DUSE_HAL_DRIVER -DSTM32H745xx -DUSE_PWR_LDO_SUPPLY -DBOARD_REV=$(BOARD_REV)
+DEFINES := -DCORE_CM7 -DUSE_HAL_DRIVER -DSTM32H745xx -DUSE_PWR_LDO_SUPPLY -DPACKET_FULL_AUDIO -DBOARD_REV=$(BOARD_REV)
 
 VPATH := ../Common/Src Core/Src Core/Startup ../Drivers/STM32H7xx_HAL_Driver/Src
 INCLUDES := -I../Common/Inc -ICore/Inc -I../Drivers/STM32H7xx_HAL_Driver/Inc -I../Drivers/CMSIS/Include -I../Drivers/CMSIS/Device/ST/STM32H7xx/Include -I../Middlewares/ST/ARM/DSP/Inc
