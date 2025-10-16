@@ -54,3 +54,8 @@ dkms.conf
 # MacOS Files
 .DS_Store
 
+# Build Files
+CM4/Debug/
+CM4/Release/
+CM7/Debug/
+CM7/Release/
