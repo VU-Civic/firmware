@@ -3,6 +3,7 @@
 // Header Inclusions ---------------------------------------------------------------------------------------------------
 
 #include "main.h"
+#include "ai.h"
 #include "audio.h"
 #include "cellular.h"
 #include "gps.h"
@@ -53,17 +54,26 @@ int main(void)
    audio_init();
    imu_init();
    gps_init();
+   ai_comms_init();
    cell_init();
+   opusenc_init();
 
    // Start user peripherals
    imu_start();
+   ai_comms_start();
    cpu_init();
 
    // Loop forever
+   uint8_t processing_occurred;
    while (1)
    {
-      cell_update_state();
-      cpu_sleep();
+      // Carry out slow processing operations
+      processing_occurred = audio_process_new_data(CELL_AUDIO_NO_TRANSMIT); // TODO: Call with correct parameter
+      processing_occurred = cell_update_state() || processing_occurred;
+
+      // Put the CPU to sleep if no processing occurred
+      if (!processing_occurred)
+         cpu_sleep();
    }
    return 0;
 }
