@@ -11,6 +11,17 @@
 #define STRINGIZE_HELPER(x) #x
 #define STRINGIZE(x) STRINGIZE_HELPER(x)
 
+#define CELL_UART_CONCAT(a,t,n,c)         cell_uart_concat(a,t,n,c)
+#define cell_uart_concat(a,t,n,c)         a ## t ## n ## c
+
+#define CELL_UART_IRQHandler              cell_uart_irq1(CELL_UART_TYPE, CELL_UART_NUMBER)
+#define cell_uart_irq1(t,n)               cell_uart_irq(t,n)
+#define cell_uart_irq(t,n)                t ## n ## _IRQHandler
+
+#define CELL_UART                         cell_uart1(CELL_UART_TYPE, CELL_UART_NUMBER)
+#define cell_uart1(t,n)                   cell_uart(t,n)
+#define cell_uart(t,n)                    t ## n
+
 #define CELL_TIMER_MS_PER_TICK            2U
 #define CELL_TIMER_20MS_COUNT             6U
 #define CELL_TIMER_5MIN_COUNT             61440U
@@ -21,12 +32,9 @@
 
 #define CELL_MAX_AT_COMMAND_SIZE          3072
 #define CELL_MAX_RX_PACKET_SIZE           1024
-#define CELL_MAX_TX_PAYLOAD_SIZE          1016
-#define CELL_MAX_AUDIO_PAYLOAD_SIZE       (CELL_MAX_TX_PAYLOAD_SIZE - 4)
 #define CELL_MAX_NETWORK_RESPONSE_MS      5500
 
 #define CLIENT_ID_IMEI_OFFSET             14
-#define CLIENT_ID_IMEI_LENGTH             15
 #define SIM_CARD_ID_MIN_LENGTH            18
 #define SIM_CARD_ID_MAX_LENGTH            22
 #define UMQTTSN_ERROR_CLASS_CODE          14
@@ -130,13 +138,6 @@ typedef enum
    MQTT_DONE
 } mqtt_operation_t;
 
-typedef struct
-{
-   volatile uint32_t ISR;
-   volatile uint32_t Reserved0;
-   volatile uint32_t IFCR;
-} dma_int_registers_t;
-
 
 // Static Cellular Variables -------------------------------------------------------------------------------------------
 
@@ -163,9 +164,11 @@ static volatile uint8_t cell_modem_available = 0, configure_modem = 0, mqtt_conn
 static volatile uint8_t valid_cgreg = 0, valid_cereg = 0, valid_pdp = 0, temperature_alert = 0;
 static volatile uint8_t cell_busy = 0, device_info_update = 0, mqtt_subscribed = 0, prompt_received = 0;
 static volatile uint8_t command_acked = 0, command_nacked = 0, timed_out = 0, in_holdoff_period = 0;
-static volatile char imei[CLIENT_ID_IMEI_LENGTH] = { 0 }, device_id[CLIENT_ID_IMEI_LENGTH] = { 0 };
+static volatile char imei[CELL_IMEI_LENGTH] = { 0 }, device_id[CELL_IMEI_LENGTH] = { 0 };
 static volatile char sim_id[SIM_CARD_ID_MAX_LENGTH+1], *incoming_message = 0;
 static volatile uint32_t baud_rate = 0, cme_error = 0;
+static evidence_message_t evidence_message;
+static uint16_t evidence_message_idx = 0;
 
 
 // Private Helper Functions --------------------------------------------------------------------------------------------
@@ -324,32 +327,16 @@ static uint8_t cell_mqtt_publish_device_info(void)
    return cell_mqtt_publish_binary(publish_info_message, info_message_length, (char*)&device_info, sizeof(device_info_t), CELL_MAX_NETWORK_RESPONSE_MS);
 }
 
-static uint8_t cell_mqtt_publish_alert(const event_message_t *event)
+static uint8_t cell_mqtt_publish_alert(const alert_message_t *alert)
 {
    // Transfer this event alert to the network
-   return cell_mqtt_publish_binary(publish_alert_message, alert_message_length, (char*)event, sizeof(event_message_t), CELL_MAX_NETWORK_RESPONSE_MS);
+   return cell_mqtt_publish_binary(publish_alert_message, alert_message_length, (char*)alert, sizeof(alert_message_t), CELL_MAX_NETWORK_RESPONSE_MS);
 }
 
 static uint8_t cell_mqtt_publish_audio(uint8_t *audio, uint32_t audio_len)
 {
-   // Determine the size and quantity of audio chunks required to transmit the data
-   uint32_t final_chunk_len = audio_len % CELL_MAX_AUDIO_PAYLOAD_SIZE, num_chunks = audio_len / CELL_MAX_AUDIO_PAYLOAD_SIZE;
-   if (final_chunk_len)
-      ++num_chunks;
-   else
-      final_chunk_len = CELL_MAX_AUDIO_PAYLOAD_SIZE;
-
-   // Transfer all data to the network in chunks unless an error occurs
-   uint8_t success = 1;
-   for (uint32_t chunk = 1; success && (chunk <= num_chunks); ++chunk)
-   {
-      memcpy(audio, &chunk, sizeof(chunk));
-      const uint32_t audio_chunk_len = (chunk == num_chunks) ? final_chunk_len : CELL_MAX_AUDIO_PAYLOAD_SIZE;
-      sprintf(publish_audio_message + sizeof(CELL_MQTTSN_PUB_BINARY_AUDIO_MSG) - 1, "%lu\r", audio_chunk_len + sizeof(chunk));
-      success = cell_mqtt_publish_binary(publish_audio_message, sizeof(publish_audio_message), (char*)audio, audio_chunk_len + sizeof(chunk), CELL_MAX_NETWORK_RESPONSE_MS);
-      audio += audio_chunk_len;
-   }
-   return success;
+   // Transfer this audio clip to the network
+   return cell_mqtt_publish_binary(publish_audio_message, 2 + sizeof(CELL_MQTTSN_PUB_BINARY_AUDIO_MSG) + offsetof(evidence_message_t, data) + evidence_message_idx, (char*)&evidence_message, offsetof(evidence_message_t, data) + evidence_message_idx, CELL_MAX_NETWORK_RESPONSE_MS);
 }
 
 #else
@@ -397,11 +384,11 @@ static uint8_t cell_mqtt_publish_device_info(void)
    return mqtt_result;
 }
 
-static uint8_t cell_mqtt_publish_alert(const event_message_t *event)
+static uint8_t cell_mqtt_publish_alert(const alert_message_t *alert)
 {
    // Set up the publish transfer buffer
    memcpy(publish_message_buffer, CELL_MQTTSN_PUBLISH_ALERT_MSG, sizeof(CELL_MQTTSN_PUBLISH_ALERT_MSG));
-   const uint32_t message_len = 2 + sizeof(CELL_MQTTSN_PUBLISH_ALERT_MSG) + hex_encode_binary_data(publish_message_buffer + sizeof(CELL_MQTTSN_PUBLISH_ALERT_MSG) - 1, (const uint8_t*)event, sizeof(event_message_t));
+   const uint32_t message_len = 2 + sizeof(CELL_MQTTSN_PUBLISH_ALERT_MSG) + hex_encode_binary_data(publish_message_buffer + sizeof(CELL_MQTTSN_PUBLISH_ALERT_MSG) - 1, (const uint8_t*)alert, sizeof(alert_message_t));
    memcpy(publish_message_buffer + message_len - 3, "\"\r", 2);
 
    // Issue the publish command and wait for a response
@@ -412,27 +399,17 @@ static uint8_t cell_mqtt_publish_alert(const event_message_t *event)
    return mqtt_result;
 }
 
-static uint8_t cell_mqtt_publish_audio(uint8_t *audio, uint32_t audio_len)
+static uint8_t cell_mqtt_publish_audio(void)
 {
-   // Determine the size and quantity of audio chunks required to transmit the data
+   // Set up the publish transfer buffer
    memcpy(publish_message_buffer, CELL_MQTTSN_PUBLISH_AUDIO_MSG, sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG));
-   uint32_t final_chunk_len = audio_len % CELL_MAX_AUDIO_PAYLOAD_SIZE, num_chunks = audio_len / CELL_MAX_AUDIO_PAYLOAD_SIZE;
-   if (final_chunk_len)
-      ++num_chunks;
-   else
-      final_chunk_len = CELL_MAX_AUDIO_PAYLOAD_SIZE;
+   const uint32_t message_len = 2 + sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG) + hex_encode_binary_data(publish_message_buffer + sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG) - 1, (const uint8_t*)&evidence_message, offsetof(evidence_message_t, data) + evidence_message_idx);
+   memcpy(publish_message_buffer + message_len - 3, "\"\r", 2);
 
-   // Transfer all data to the network in chunks unless an error occurs
+   // Issue the publish command and wait for a response
    cell_busy = 1;
    mqtt_result = 0;
-   for (uint32_t chunk = 1; !mqtt_result && (chunk <= num_chunks); ++chunk)
-   {
-      memcpy(audio, &chunk, sizeof(chunk));
-      const uint32_t audio_chunk_len = (chunk == num_chunks) ? final_chunk_len : CELL_MAX_AUDIO_PAYLOAD_SIZE;
-      const uint32_t message_len = 2 + sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG) + hex_encode_binary_data(publish_message_buffer + sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG) - 1, audio, audio_chunk_len + sizeof(chunk));
-      cell_mqtt_publish_binary(publish_message_buffer, message_len, CELL_MAX_NETWORK_RESPONSE_MS);
-      audio += audio_chunk_len;
-   }
+   cell_mqtt_publish_binary(publish_message_buffer, message_len, CELL_MAX_NETWORK_RESPONSE_MS);
    cell_busy = 0;
    return mqtt_result;
 }
@@ -459,14 +436,17 @@ static void cell_reset_modem(uint8_t hard_reset)
       // Assert the nRESET pin for at least 50ms to trigger a reset
       WRITE_REG(CELL_NRESET_GPIO_Port->BSRR, (uint32_t)CELL_NRESET_Pin << 16U);
       set_command_timeout(100 / CELL_TIMER_MS_PER_TICK);
+      cell_modem_available = 0;
       while (!timed_out);
       WRITE_REG(CELL_NRESET_GPIO_Port->BSRR, CELL_NRESET_Pin);
    }
    else
+   {
       cell_send_command_await_response(CELL_SOFT_RESET_MSG, sizeof(CELL_SOFT_RESET_MSG), 1000);
+      cell_modem_available = 0;
+   }
 
    // Wait until the modem comes back online or times out
-   cell_modem_available = 0;
    set_command_timeout(CELL_MODEM_STATUS_BOOT_TIME_MS / CELL_TIMER_MS_PER_TICK);
    while (!cell_modem_available && !timed_out)
       cpu_sleep();
@@ -521,17 +501,17 @@ static uint8_t cell_configure_modem(void)
       HAL_NVIC_DisableIRQ(LPTIM5_IRQn);
       HAL_NVIC_DisableIRQ(LPTIM4_IRQn);
       HAL_NVIC_DisableIRQ(LPTIM3_IRQn);
-      HAL_NVIC_DisableIRQ(UART7_IRQn);
+      HAL_NVIC_DisableIRQ(CELL_UART_CONCAT(, CELL_UART_TYPE, CELL_UART_NUMBER, _IRQn));
       CLEAR_BIT(LPTIM5->CR, LPTIM_CR_ENABLE);
       CLEAR_BIT(LPTIM4->CR, LPTIM_CR_ENABLE);
       CLEAR_BIT(LPTIM3->CR, LPTIM_CR_ENABLE);
-      CLEAR_BIT(UART7->CR1, USART_CR1_UE);
+      CLEAR_BIT(CELL_UART->CR1, USART_CR1_UE);
       CLEAR_BIT(DMA2_Stream3->CR, DMA_SxCR_EN);
       CLEAR_BIT(DMA2_Stream1->CR, DMA_SxCR_EN);
       CLEAR_BIT(RCC->APB4ENR, RCC_APB4ENR_LPTIM5EN);
       CLEAR_BIT(RCC->APB4ENR, RCC_APB4ENR_LPTIM4EN);
       CLEAR_BIT(RCC->APB4ENR, RCC_APB4ENR_LPTIM3EN);
-      CLEAR_BIT(RCC->APB1LENR, RCC_APB1LENR_UART7EN);
+      CLEAR_BIT(RCC->APB1LENR, CELL_UART_CONCAT(RCC_APB1LENR_, CELL_UART_TYPE, CELL_UART_NUMBER, EN));
    }
 
    // Clear the configuration request flag
@@ -722,13 +702,13 @@ static uint16_t cell_process_message(char* msg, uint16_t max_msg_len)
          sim_id[i] = *(msg++);
       msg += 2;
    }
-   else if ((max_msg_len >= (1 + CLIENT_ID_IMEI_LENGTH + sizeof(CELL_IMEI_MSG))) && (memcmp(msg, CELL_IMEI_MSG, sizeof(CELL_IMEI_MSG) - 1) == 0))
+   else if ((max_msg_len >= (1 + CELL_IMEI_LENGTH + sizeof(CELL_IMEI_MSG))) && (memcmp(msg, CELL_IMEI_MSG, sizeof(CELL_IMEI_MSG) - 1) == 0))
    {
       msg = find_start_of_message(msg, sizeof(CELL_IMEI_MSG) - 1, &max_msg_len) + 1;
       memcpy((char*)imei, msg, sizeof(imei));
       msg += sizeof(imei) + 3;
    }
-   else if ((max_msg_len >= (3 + CLIENT_ID_IMEI_LENGTH + sizeof(CELL_MQTTSN_CLIENT_ID_MSG))) && (memcmp(msg, CELL_MQTTSN_CLIENT_ID_MSG, sizeof(CELL_MQTTSN_CLIENT_ID_MSG) - 1) == 0))
+   else if ((max_msg_len >= (3 + CELL_IMEI_LENGTH + sizeof(CELL_MQTTSN_CLIENT_ID_MSG))) && (memcmp(msg, CELL_MQTTSN_CLIENT_ID_MSG, sizeof(CELL_MQTTSN_CLIENT_ID_MSG) - 1) == 0))
    {
       memcpy((char*)device_id, msg + sizeof(CELL_MQTTSN_CLIENT_ID_MSG), sizeof(device_id));
       msg += sizeof(CELL_MQTTSN_CLIENT_ID_MSG) + 3;
@@ -788,7 +768,7 @@ void LPTIM5_IRQHandler(void)
    in_holdoff_period = 0;
 }
 
-void UART7_IRQHandler(void)
+void CELL_UART_IRQHandler(void)
 {
    // Create static indices to keep track of the location of unprocessed data
    static uint32_t previous_data_index = 0;
@@ -800,10 +780,10 @@ void UART7_IRQHandler(void)
    __DMB();
 
    // Ensure that this interrupt was due to an idle line
-   if (READ_BIT(UART7->ISR, USART_ISR_IDLE))
+   if (READ_BIT(CELL_UART->ISR, USART_ISR_IDLE))
    {
       // Clear the interrupt and set the transmission hold-off period flag
-      WRITE_REG(UART7->ICR, UART_CLEAR_IDLEF);
+      WRITE_REG(CELL_UART->ICR, UART_CLEAR_IDLEF);
       in_holdoff_period = 1;
 
       // Determine whether data wrapping is necessary due to the circular buffer
@@ -842,8 +822,10 @@ void cell_power_on(void)
    // Initialize the various GPIO clocks
    SET_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOAEN);
    (void)READ_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOAEN);
+#if REV_ID == REV_A
    SET_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOEEN);
    (void)READ_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOEEN);
+#endif
 
    // Initialize the GPIO power pin
    WRITE_REG(CELL_NPWR_ON_GPIO_Port->BSRR, CELL_NPWR_ON_Pin);
@@ -866,7 +848,7 @@ void cell_init(void)
    info_message_length += sprintf(publish_info_message + sizeof(CELL_MQTTSN_PUB_BINARY_INFO_MSG) - 1, "%u\r", sizeof(device_info_t));
    alert_message_length = sizeof(CELL_MQTTSN_PUB_BINARY_ALERT_MSG);
    memcpy(publish_alert_message, CELL_MQTTSN_PUB_BINARY_ALERT_MSG, sizeof(CELL_MQTTSN_PUB_BINARY_ALERT_MSG));
-   alert_message_length += sprintf(publish_alert_message + sizeof(CELL_MQTTSN_PUB_BINARY_ALERT_MSG) - 1, "%u\r", sizeof(event_message_t));
+   alert_message_length += sprintf(publish_alert_message + sizeof(CELL_MQTTSN_PUB_BINARY_ALERT_MSG) - 1, "%u\r", sizeof(alert_message_t));
    memcpy(publish_audio_message, CELL_MQTTSN_PUB_BINARY_AUDIO_MSG, sizeof(CELL_MQTTSN_PUB_BINARY_AUDIO_MSG));
 #endif
 
@@ -875,9 +857,9 @@ void cell_init(void)
    SET_BIT(RCC->AHB1ENR, RCC_AHB1ENR_DMA2EN);
    (void)READ_BIT(RCC->AHB1ENR, RCC_AHB1ENR_DMA2EN);
 
-   // Initialize the UART7 peripheral clock
-   SET_BIT(RCC->APB1LENR, RCC_APB1LENR_UART7EN);
-   (void)READ_BIT(RCC->APB1LENR, RCC_APB1LENR_UART7EN);
+   // Initialize the CELL UART peripheral clock
+   SET_BIT(RCC->APB1LENR, CELL_UART_CONCAT(RCC_APB1LENR_, CELL_UART_TYPE, CELL_UART_NUMBER, EN));
+   (void)READ_BIT(RCC->APB1LENR, CELL_UART_CONCAT(RCC_APB1LENR_, CELL_UART_TYPE, CELL_UART_NUMBER, EN));
    MODIFY_REG(RCC->D2CCIP2R, RCC_D2CCIP2R_USART28SEL, (uint32_t)RCC_USART234578CLKSOURCE_D2PCLK1);
 
    // Initialize the SYSCFG clock
@@ -895,12 +877,13 @@ void cell_init(void)
 
    // Initialize the non-peripheral GPIO pins
    WRITE_REG(CELL_NRESET_GPIO_Port->BSRR, CELL_NRESET_Pin);
-   WRITE_REG(RPI_PWR_SWITCH_GPIO_Port->BSRR, RPI_PWR_SWITCH_Pin);
    uint32_t position = 32 - __builtin_clz(CELL_NRESET_Pin) - 1;
    MODIFY_REG(CELL_NRESET_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_LOW << (position * 2U)));
    MODIFY_REG(CELL_NRESET_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_OUTPUT_OD & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
    CLEAR_BIT(CELL_NRESET_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
    MODIFY_REG(CELL_NRESET_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_OUTPUT_OD & GPIO_MODE) << (position * 2U)));
+#if REV_ID == REV_A
+   WRITE_REG(RPI_PWR_SWITCH_GPIO_Port->BSRR, RPI_PWR_SWITCH_Pin);
    position = 32 - __builtin_clz(RPI_PWR_SWITCH_Pin) - 1;
    MODIFY_REG(RPI_PWR_SWITCH_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_LOW << (position * 2U)));
    MODIFY_REG(RPI_PWR_SWITCH_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_OUTPUT_OD & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
@@ -909,44 +892,45 @@ void cell_init(void)
    position = 32 - __builtin_clz(RPI_NPWR_OFF_Pin) - 1;
    MODIFY_REG(RPI_NPWR_OFF_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)), (GPIO_PULLUP << (position * 2U)));
    MODIFY_REG(RPI_NPWR_OFF_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_INPUT & GPIO_MODE) << (position * 2U)));
+#endif
 
-   // Initialize the UART7 GPIO pins
+   // Initialize the CELL UART GPIO pins
    position = 32 - __builtin_clz(CELL_RTS_Pin) - 1;
    MODIFY_REG(CELL_RTS_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_HIGH << (position * 2U)));
    MODIFY_REG(CELL_RTS_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_AF_PP & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
    CLEAR_BIT(CELL_RTS_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
-   MODIFY_REG(CELL_RTS_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (GPIO_AF7_UART7 << ((position & 0x07U) * 4U)));
+   MODIFY_REG(CELL_RTS_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (CELL_UART_AF << ((position & 0x07U) * 4U)));
    MODIFY_REG(CELL_RTS_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_AF_PP & GPIO_MODE) << (position * 2U)));
    position = 32 - __builtin_clz(CELL_CTS_Pin) - 1;
    MODIFY_REG(CELL_CTS_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_HIGH << (position * 2U)));
    MODIFY_REG(CELL_CTS_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_AF_PP & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
    CLEAR_BIT(CELL_CTS_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
-   MODIFY_REG(CELL_CTS_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (GPIO_AF7_UART7 << ((position & 0x07U) * 4U)));
+   MODIFY_REG(CELL_CTS_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (CELL_UART_AF << ((position & 0x07U) * 4U)));
    MODIFY_REG(CELL_CTS_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_AF_PP & GPIO_MODE) << (position * 2U)));
    position = 32 - __builtin_clz(CELL_TX_Pin) - 1;
    MODIFY_REG(CELL_TX_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_HIGH << (position * 2U)));
    MODIFY_REG(CELL_TX_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_AF_PP & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
    CLEAR_BIT(CELL_TX_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
-   MODIFY_REG(CELL_TX_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (GPIO_AF7_UART7 << ((position & 0x07U) * 4U)));
+   MODIFY_REG(CELL_TX_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (CELL_UART_AF << ((position & 0x07U) * 4U)));
    MODIFY_REG(CELL_TX_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_AF_PP & GPIO_MODE) << (position * 2U)));
    position = 32 - __builtin_clz(CELL_RX_Pin) - 1;
    MODIFY_REG(CELL_RX_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_HIGH << (position * 2U)));
    MODIFY_REG(CELL_RX_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_AF_PP & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
    CLEAR_BIT(CELL_RX_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
-   MODIFY_REG(CELL_RX_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (GPIO_AF7_UART7 << ((position & 0x07U) * 4U)));
+   MODIFY_REG(CELL_RX_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (CELL_UART_AF << ((position & 0x07U) * 4U)));
    MODIFY_REG(CELL_RX_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_AF_PP & GPIO_MODE) << (position * 2U)));
 
-   // Initialize DMA2 Stream1 for UART7 RX
+   // Initialize DMA2 Stream1 for CELL UART RX
    CLEAR_BIT(DMA2_Stream1->CR, DMA_SxCR_EN);
    while (READ_BIT(DMA2_Stream1->CR, DMA_SxCR_EN));
    MODIFY_REG(DMA2_Stream1->CR,
               (DMA_SxCR_MBURST | DMA_SxCR_PBURST | DMA_SxCR_PL | DMA_SxCR_MSIZE | DMA_SxCR_PSIZE | DMA_SxCR_MINC | DMA_SxCR_PINC | DMA_SxCR_CIRC | DMA_SxCR_DIR | DMA_SxCR_CT | DMA_SxCR_DBM),
               (DMA_PERIPH_TO_MEMORY | DMA_MINC_ENABLE | DMA_PDATAALIGN_BYTE | DMA_MDATAALIGN_BYTE | DMA_CIRCULAR | DMA_PRIORITY_MEDIUM | DMA_SxCR_TRBUFF));
    CLEAR_BIT(DMA2_Stream1->FCR, (DMA_SxFCR_DMDIS | DMA_SxFCR_FTH));
-   WRITE_REG(DMAMUX1_Channel9->CCR, DMA_REQUEST_UART7_RX);
+   WRITE_REG(DMAMUX1_Channel9->CCR, CELL_UART_CONCAT(DMA_REQUEST_, CELL_UART_TYPE, CELL_UART_NUMBER, _RX));
    WRITE_REG(DMAMUX1_ChannelStatus->CFR, (1UL << (9 & 0x1FU)));
 
-   // Initialize DMA2 Stream3 for UART7 TX
+   // Initialize DMA2 Stream3 for CELL UART TX
    CLEAR_BIT(DMA2_Stream3->CR, DMA_SxCR_EN);
    while (READ_BIT(DMA2_Stream3->CR, DMA_SxCR_EN));
    MODIFY_REG(DMA2_Stream3->CR,
@@ -954,35 +938,35 @@ void cell_init(void)
               (DMA_MEMORY_TO_PERIPH | DMA_MINC_ENABLE | DMA_PDATAALIGN_BYTE | DMA_MDATAALIGN_BYTE | DMA_PRIORITY_MEDIUM | DMA_SxCR_TRBUFF));
    CLEAR_BIT(DMA2_Stream3->FCR, (DMA_SxFCR_DMDIS | DMA_SxFCR_FTH));
    dma_int_registers = (dma_int_registers_t*)((uint32_t)DMA2_Stream3 & (uint32_t)(~0x3FFU));
-   WRITE_REG(DMAMUX1_Channel11->CCR, DMA_REQUEST_UART7_TX);
+   WRITE_REG(DMAMUX1_Channel11->CCR, CELL_UART_CONCAT(DMA_REQUEST_, CELL_UART_TYPE, CELL_UART_NUMBER, _TX));
    WRITE_REG(DMAMUX1_ChannelStatus->CFR, (1UL << (11 & 0x1FU)));
 
-   // Initialize the UART7 peripheral
-   CLEAR_BIT(UART7->CR1, USART_CR1_UE);
-   while (READ_BIT(UART7->CR1, USART_CR1_UE));
-   MODIFY_REG(UART7->CR1, (USART_CR1_M | USART_CR1_PCE | USART_CR1_PS | USART_CR1_TE | USART_CR1_RE | USART_CR1_OVER8 | USART_CR1_FIFOEN), UART_MODE_TX_RX);
-   CLEAR_BIT(UART7->CR2, USART_CR2_STOP);
-   MODIFY_REG(UART7->CR3, (USART_CR3_RTSE | USART_CR3_CTSE | USART_CR3_ONEBIT | USART_CR3_TXFTCFG | USART_CR3_RXFTCFG), UART_HWCONTROL_RTS_CTS);
-   CLEAR_BIT(UART7->PRESC, USART_PRESC_PRESCALER);
-   WRITE_REG(UART7->BRR, (uint16_t)UART_DIV_SAMPLING16(HAL_RCC_GetPCLK1Freq(), CELL_MODEM_DESIRED_BAUD_RATE, 0));
-   CLEAR_BIT(UART7->CR2, (USART_CR2_LINEN | USART_CR2_CLKEN));
-   CLEAR_BIT(UART7->CR3, (USART_CR3_SCEN | USART_CR3_HDSEL | USART_CR3_IREN));
-   SET_BIT(UART7->CR1, USART_CR1_UE);
-   if (READ_BIT(UART7->CR1, USART_CR1_TE))
-      while (!READ_BIT(UART7->ISR, USART_ISR_TEACK));
-   if (READ_BIT(UART7->CR1, USART_CR1_RE))
-      while (!READ_BIT(UART7->ISR, USART_ISR_REACK));
-   NVIC_SetPriority(UART7_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 0, 0));
-   NVIC_EnableIRQ(UART7_IRQn);
+   // Initialize the CELL UART peripheral
+   CLEAR_BIT(CELL_UART->CR1, USART_CR1_UE);
+   while (READ_BIT(CELL_UART->CR1, USART_CR1_UE));
+   MODIFY_REG(CELL_UART->CR1, (USART_CR1_M | USART_CR1_PCE | USART_CR1_PS | USART_CR1_TE | USART_CR1_RE | USART_CR1_OVER8 | USART_CR1_FIFOEN), UART_MODE_TX_RX);
+   CLEAR_BIT(CELL_UART->CR2, USART_CR2_STOP);
+   MODIFY_REG(CELL_UART->CR3, (USART_CR3_RTSE | USART_CR3_CTSE | USART_CR3_ONEBIT | USART_CR3_TXFTCFG | USART_CR3_RXFTCFG), UART_HWCONTROL_RTS_CTS);
+   CLEAR_BIT(CELL_UART->PRESC, USART_PRESC_PRESCALER);
+   WRITE_REG(CELL_UART->BRR, (uint16_t)UART_DIV_SAMPLING16(HAL_RCC_GetPCLK1Freq(), CELL_MODEM_DESIRED_BAUD_RATE, 0));
+   CLEAR_BIT(CELL_UART->CR2, (USART_CR2_LINEN | USART_CR2_CLKEN));
+   CLEAR_BIT(CELL_UART->CR3, (USART_CR3_SCEN | USART_CR3_HDSEL | USART_CR3_IREN));
+   SET_BIT(CELL_UART->CR1, USART_CR1_UE);
+   if (READ_BIT(CELL_UART->CR1, USART_CR1_TE))
+      while (!READ_BIT(CELL_UART->ISR, USART_ISR_TEACK));
+   if (READ_BIT(CELL_UART->CR1, USART_CR1_RE))
+      while (!READ_BIT(CELL_UART->ISR, USART_ISR_REACK));
+   NVIC_SetPriority(CELL_UART_CONCAT(, CELL_UART_TYPE, CELL_UART_NUMBER, _IRQn), NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 0, 0));
+   NVIC_EnableIRQ(CELL_UART_CONCAT(, CELL_UART_TYPE, CELL_UART_NUMBER, _IRQn));
 
-   // Configure the UART7 RX DMA buffer addresses and sizes
-   WRITE_REG(DMA2_Stream1->PAR, (uint32_t)&UART7->RDR);
+   // Configure the CELL UART RX DMA buffer addresses and sizes
+   WRITE_REG(DMA2_Stream1->PAR, (uint32_t)&CELL_UART->RDR);
    WRITE_REG(DMA2_Stream1->M0AR, (uint32_t)cell_rx_buffer);
    WRITE_REG(DMA2_Stream1->NDTR, sizeof(cell_rx_buffer));
    CLEAR_BIT(DMA2_Stream1->CR, (DMA_IT_TC | DMA_IT_TE | DMA_IT_DME | DMA_IT_HT));
 
-   // Configure the UART7 TX DMA peripheral address
-   WRITE_REG(DMA2_Stream3->PAR, (uint32_t)&UART7->TDR);
+   // Configure the CELL UART TX DMA peripheral address
+   WRITE_REG(DMA2_Stream3->PAR, (uint32_t)&CELL_UART->TDR);
    CLEAR_BIT(DMA2_Stream3->CR, (DMA_IT_TC | DMA_IT_TE | DMA_IT_DME | DMA_IT_HT));
 
    // Initialize the LPTIM3 peripheral as the device info update timer
@@ -1018,9 +1002,9 @@ void cell_init(void)
 
    // Start listening for packets using DMA until an idle line is detected
    SET_BIT(DMA2_Stream1->CR, DMA_SxCR_EN);
-   ATOMIC_SET_BIT(UART7->CR3, (USART_CR3_DMAR | USART_CR3_DMAT));
-   WRITE_REG(UART7->ICR, UART_CLEAR_IDLEF);
-   ATOMIC_SET_BIT(UART7->CR1, USART_CR1_IDLEIE);
+   ATOMIC_SET_BIT(CELL_UART->CR3, (USART_CR3_DMAR | USART_CR3_DMAT));
+   WRITE_REG(CELL_UART->ICR, UART_CLEAR_IDLEF);
+   ATOMIC_SET_BIT(CELL_UART->CR1, USART_CR1_IDLEIE);
 
    // Wait for the cellular modem to become available
    set_command_timeout(CELL_MODEM_STATUS_BOOT_TIME_MS / CELL_TIMER_MS_PER_TICK);
@@ -1068,9 +1052,10 @@ void cell_init(void)
    }
 }
 
-void cell_update_state(void)
+uint8_t cell_update_state(void)
 {
    // Process any outstanding messages that were received since the last invocation
+   const uint8_t processing_occurred = configure_modem || connectivity_changed || device_info_update || pending_messages;
    if (configure_modem)
       cell_configure_modem();
    if (connectivity_changed)
@@ -1086,11 +1071,10 @@ void cell_update_state(void)
             cell_mqtt_connect();
          else if (!mqtt_subscribed)
             cell_mqtt_subscribe();
-         cell_mqtt_publish_device_info();
       }
       else
       {
-         // TODO: SEE 8.2 etc for full-stack suggestions
+         // TODO: USE ONE OF THE UNUSED TIMERS TO START A TRY AGAIN TIMER (IF NO CGREG||CEREG FOR X SECONDS, "AT+CFUN=0\r" then "AT+CFUN=1\r") (IF NO PDP FOR AWHILE, "AT+CGACT=0,<cid>\r" then "AT+CGACT=1,<cid>\r" maybe with cfun in between too) (IF NO MQTT WHEN ALL ELSE WORKS, TRY AGAIN PRETTY QUICKLY)
       }
    }
    if (device_info_update)
@@ -1101,6 +1085,9 @@ void cell_update_state(void)
    }
    while (pending_messages)
       cell_process_network_message(cell_mqtt_read());
+
+   // Return whether this function call actually processed anything
+   return processing_occurred;
 }
 
 void cell_update_device_details(void)
@@ -1117,16 +1104,44 @@ void cell_update_device_details(void)
    }
 }
 
-void cell_transmit_alert(event_message_t *event, uint8_t *audio, uint32_t audio_len)
+void cell_transmit_alert(alert_message_t *alert)
 {
-   // Piggyback the current device details onto the event alert message
-   event->chip_temperature_alert = device_info.chip_temperature_alert;
-   event->signal_power = device_info.signal_power;
-   event->signal_quality = device_info.signal_quality;
+   // Reset the evidence message storage metadata
+   evidence_message.message_idx = evidence_message.is_final_message = 0;
+   evidence_message_idx = 0;
 
-   // TODO: MAKE SURE AUDIO BUFFER IS PASSED TO THE TRANSMIT FUNCTION WITH AN INITIAL OFFSET OF 4 BYTES SO WE CAN ADD THE AUDIO FRAMING
-   if (cell_mqtt_publish_alert(event))
-      cell_mqtt_publish_audio(audio, audio_len);
+   // Piggyback the current device details onto the event alert message
+   alert->sensor_temperature_alert = device_info.chip_temperature_alert;
+   alert->cell_signal_power = device_info.signal_power;
+   alert->cell_signal_quality = device_info.signal_quality;
+   cell_mqtt_publish_alert(alert);
+}
+
+void cell_transmit_audio(const opus_frame_t *restrict audio_frame, uint8_t is_final_frame)
+{
+   // Append the audio frame to the current evidence packet, sending a full packet and splitting if necessary
+   if ((CELL_EVIDENCE_MAX_PAYLOAD_SIZE - evidence_message_idx) < (audio_frame->num_encoded_bytes + offsetof(opus_frame_t, encoded_data)))
+   {
+      memcpy(evidence_message.data + evidence_message_idx, audio_frame, CELL_EVIDENCE_MAX_PAYLOAD_SIZE - evidence_message_idx);
+      cell_mqtt_publish_audio();
+      memcpy(evidence_message.data, (uint8_t*)audio_frame + CELL_EVIDENCE_MAX_PAYLOAD_SIZE - evidence_message_idx, (audio_frame->num_encoded_bytes + offsetof(opus_frame_t, encoded_data)) - (CELL_MQTT_MAX_PAYLOAD_SIZE_BYTES - evidence_message_idx));
+      evidence_message_idx = audio_frame->num_encoded_bytes + offsetof(opus_frame_t, encoded_data) - (CELL_EVIDENCE_MAX_PAYLOAD_SIZE - evidence_message_idx);
+      ++evidence_message.message_idx;
+   }
+   else
+   {
+      memcpy(evidence_message.data + evidence_message_idx, audio_frame, audio_frame->num_encoded_bytes + offsetof(opus_frame_t, encoded_data));
+      evidence_message_idx += audio_frame->num_encoded_bytes + offsetof(opus_frame_t, encoded_data);
+   }
+
+   // Send the evidence packet if full or if this is the final audio frame
+   evidence_message.is_final_message = is_final_frame;
+   if (is_final_frame || (evidence_message_idx == CELL_EVIDENCE_MAX_PAYLOAD_SIZE))
+   {
+      cell_mqtt_publish_audio();
+      ++evidence_message.message_idx;
+      evidence_message_idx = 0;
+   }
 }
 
 uint8_t cell_is_busy(void)
@@ -1136,7 +1151,5 @@ uint8_t cell_is_busy(void)
 }
 
 // TODO: BROKER CAN REQUEST DEVICE INFO UPDATES WHENEVER, STORE MQTT DURATIONS AND QOS IN NVM SOMEWHERE AND ALLOW BROKER TO CHANGE THESE VALUES (NOT HARDCODED)
-// TODO: EMAIL Hi there! I had a quick question about the availability of the "Lena-R8001M10" module. We have an ongoing research project that is just wrapping up the hardware development phase, and we've been using the u-blox LENA-R8001M10-00C integrated LTE + GNSS chip for our comms and GPS. I just noticed that u-blox appears to have sold this technology to Trasna, but I'm not seeing the Trasna chip versions available anywhere yet. We will need to order around 100-200 of these modules in the next couple of months are are just wondering 1) are these chips available from you guys yet, 2) if not, do you have an estimate of when they will be available, and 3) are these 100% pin and firmware compatible with the LENA-R8001M10-00C? Thanks for your help!
-// TODO: Semtech: RC7110 to replace LENA-R8 if need be, although GPS not included
 
 #endif  // #ifdef CORE_CM4
