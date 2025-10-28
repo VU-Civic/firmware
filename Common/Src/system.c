@@ -79,7 +79,7 @@ void *_sbrk(ptrdiff_t incr)
 
 
 // ARM Cortex Processor Interrupt and Exception Handlers ---------------------------------------------------------------
-// TODO: Should probably reboot if any of these occur
+// TODO: Should probably reboot if any of these occur (or alternately use a watchdog to auto-restart)
 
 void NMI_Handler(void) { while(1); }
 void HardFault_Handler(void) { while (1); }
@@ -89,14 +89,35 @@ void UsageFault_Handler(void) { while (1); }
 void SVC_Handler(void) {}
 void DebugMon_Handler(void) {}
 void PendSV_Handler(void) {}
-void SysTick_Handler(void) { HAL_IncTick(); }  // TODO: Let's get rid of HAL altogether
+void SysTick_Handler(void) { HAL_IncTick(); }
+
+
+// Shared Peripheral Interrupt Handlers --------------------------------------------------------------------------------
+
+#ifdef CORE_CM4
+#if REV_ID != REV_A
+
+void IMU_Int_IRQHandler(void);
+void AI_Int_IRQHandler(void);
+
+void EXTI9_5_IRQHandler(void)
+{
+   if (READ_BIT(EXTI->C2PR1, IMU_INT_Pin))
+      IMU_Int_IRQHandler();
+   if (READ_BIT(EXTI->C2PR1, FROM_AI_INT_Pin))
+      AI_Int_IRQHandler();
+}
+
+#endif
+#endif
 
 
 // Public API Functions ------------------------------------------------------------------------------------------------
 
 void chip_reset(void)
 {
-   // TODO: Implement this (also prob should activate some sort of watchdog timer)
+   // Fully reset both cores
+   NVIC_SystemReset();
 }
 
 non_volatile_data_t chip_read_non_volatile(void)

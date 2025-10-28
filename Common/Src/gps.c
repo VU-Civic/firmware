@@ -29,7 +29,7 @@
 #define UBX_MSG_CKSUM_PLACEHOLDER      0x00, 0x00
 
 #define UBX_CFG_RESET                  0x06, 0x04
-#define UBX_CFG_RESET_DATA             0xFF, 0xFF, 0x00, 0x00
+#define UBX_CFG_RESET_DATA             0x00, 0x00, 0x01, 0x00
 
 #define UBX_CFG_VALGET_MSG             0x06, 0x8B
 #define UBX_CFG_VALSET_MSG             0x06, 0x8A
@@ -73,7 +73,11 @@
 #define CFG_RATE_NAV                   0x02, 0x00, 0x21, 0x30
 #define CFG_RATE_TIMEREF               0x03, 0x00, 0x21, 0x20
 
+#define LNA_GAIN_NORMAL                0x00
+#define LNA_GAIN_LOW                   0x01
+#define LNA_GAIN_BYPASS                0x02
 #define CFG_HW_RF_LNA_MODE             0x57, 0x00, 0xA3, 0x20
+#define HW_RF_LNA_MODE                 LNA_GAIN_NORMAL  // TODO: IN HW, CONNECT V_BCKP SO THAT BBR DOESN'T GET ERASED DURING HW RESET
 
 #define UBX_GET_INTERFACE_CFG_DATA     CFG_I2C_ENABLED, CFG_SPI_ENABLED, CFG_UART1INPROT_UBX, CFG_UART1OUTPROT_UBX, CFG_UART1INPROT_NMEA, CFG_UART1OUTPROT_NMEA
 #define UBX_SET_INTERFACE_CFG_DATA     CFG_I2C_ENABLED, 0x00, CFG_SPI_ENABLED, 0x00, CFG_UART1INPROT_UBX, 0x01, CFG_UART1OUTPROT_UBX, 0x01, CFG_UART1INPROT_NMEA, 0x00, CFG_UART1OUTPROT_NMEA, 0x00
@@ -88,7 +92,7 @@
 #define UBX_SET_GEN_CFG_DATA           CFG_NAVSPG_DYNMODEL, 0x02, CFG_NAVSPG_FIXMODE, 0x03, CFG_NAVSPG_INIFIX3D, 0x01, CFG_NAVSPG_UTCSTANDARD, 0x03, CFG_SBAS_USE_RANGING, 0x00, CFG_SBAS_USE_DIFFCORR, 0x01, CFG_SBAS_USE_INTEGRITY, 0x00, CFG_TP_TP1_ENA, 0x00, CFG_TP_TIMEGRID_TP1, 0x01, CFG_RATE_MEAS, 0xF4, 0x01, CFG_RATE_NAV, 0x02, 0x00, CFG_RATE_TIMEREF, 0x01
 
 #define UBX_GET_LNA_DATA               CFG_HW_RF_LNA_MODE
-#define UBX_SET_LNA_DATA               CFG_HW_RF_LNA_MODE, 0x00
+#define UBX_SET_LNA_DATA               CFG_HW_RF_LNA_MODE, HW_RF_LNA_MODE
 
 #define FIX_TYPE_2D                    0x02
 #define FIX_TYPE_3D                    0x03
@@ -123,13 +127,6 @@ typedef enum
 
 typedef enum
 {
-   LNA_GAIN_NORMAL = 0,
-   LNA_GAIN_LOW = 1,
-   LNA_GAIN_BYPASS = 2
-} lna_gain_t;
-
-typedef enum
-{
    GPS_BAUD_4800 = 4800,
    GPS_BAUD_9600 = 9600,
    GPS_BAUD_19200 = 19200,
@@ -148,7 +145,7 @@ typedef struct __attribute__((packed))
    uint8_t month, day, hour, min, sec;
    union {
       uint8_t valid;
-      struct {
+      struct __attribute__((packed)) {
          uint8_t validDate: 1;
          uint8_t validTime: 1;
          uint8_t fullyResolved: 1;
@@ -160,7 +157,7 @@ typedef struct __attribute__((packed))
    uint8_t fixType;
    union {
       uint8_t flags;
-      struct {
+      struct __attribute__((packed)) {
          uint8_t gnssFixOK: 1;
          uint8_t diffSoln: 1;
          uint8_t psmState: 3;
@@ -170,7 +167,7 @@ typedef struct __attribute__((packed))
    };
    union {
       uint8_t flags2;
-      struct {
+      struct __attribute__((packed)) {
          uint8_t confirmedAvai: 1;
          uint8_t confirmedDate: 1;
          uint8_t confirmedTime: 1;
@@ -184,12 +181,11 @@ typedef struct __attribute__((packed))
    uint16_t pDOP;
    union {
       uint16_t flags3;
-      struct {
+      struct __attribute__((packed)) {
          uint8_t invalidLlh: 1;
          uint8_t lastCorrectionAge: 4;
          uint8_t unused: 8;
          uint8_t authTime: 1;
-         uint8_t nmaFixStatus: 1;
       };
    };
    uint8_t reserved0[4];
@@ -203,7 +199,7 @@ typedef struct __attribute__((packed))
    uint8_t ch;
    union {
       uint8_t flags;
-      struct {
+      struct __attribute__((packed)) {
          uint8_t mode: 1;
          uint8_t run: 1;
          uint8_t newFallingEdge: 1;
@@ -221,13 +217,24 @@ typedef struct __attribute__((packed))
 
 // GPS Static Variables ------------------------------------------------------------------------------------------------
 
+#define GPS_UART_CONCAT(a,t,n,c)   gps_uart_concat(a,t,n,c)
+#define gps_uart_concat(a,t,n,c)   a ## t ## n ## c
+
+#define GPS_UART_IRQHandler        gps_uart_irq1(GPS_UART_TYPE, GPS_UART_NUMBER)
+#define gps_uart_irq1(t,n)         gps_uart_irq(t,n)
+#define gps_uart_irq(t,n)          t ## n ## _IRQHandler
+
+#define GPS_UART                   gps_uart1(GPS_UART_TYPE, GPS_UART_NUMBER)
+#define gps_uart1(t,n)             gps_uart(t,n)
+#define gps_uart(t,n)              t ## n
+
 #define GPS_RX_BUFFER_SIZE_HALF        (2 * UBX_MAX_PACKET_SIZE)
 #define GPS_RX_BUFFER_SIZE_FULL        (2 * GPS_RX_BUFFER_SIZE_HALF)
 
 __attribute__((aligned (4)))
 static uint8_t gps_rx_buffer[GPS_RX_BUFFER_SIZE_FULL];
 
-static volatile float lat_degrees = 0.0f, lon_degrees = 0.0f, height_meters = 0.0f;
+static volatile float lat_degrees = -1000.0f, lon_degrees = -1000.0f, height_meters = -1000.0f;
 static volatile uint8_t gps_timepulse_fired = 0;
 static volatile double next_timestamp = 0.0;
 
@@ -251,8 +258,8 @@ static void gps_transmit(const uint8_t *data, uint16_t data_len)
    while (data_len)
    {
       // Wait until ready to transmit
-      while (!READ_BIT(UART4->ISR, UART_FLAG_TXE));
-      UART4->TDR = *data;
+      while (!READ_BIT(GPS_UART->ISR, UART_FLAG_TXE));
+      GPS_UART->TDR = *data;
       data++;
      --data_len;
    }
@@ -323,12 +330,12 @@ static ubx_message_type_t gps_process_next_char(void)
    static ubx_packet_state_t ubx_packet_state = UBX_PACKET_INIT_STATE;
 
    // Read the next GPS message character
-   if (!READ_BIT(UART4->ISR, UART_FLAG_RXNE))
+   if (!READ_BIT(GPS_UART->ISR, UART_FLAG_RXNE))
    {
-      WRITE_REG(UART4->ICR, UART_CLEAR_OREF | UART_CLEAR_RTOF | UART_CLEAR_NEF | UART_CLEAR_PEF | UART_CLEAR_FEF);
+      WRITE_REG(GPS_UART->ICR, UART_CLEAR_OREF | UART_CLEAR_RTOF | UART_CLEAR_NEF | UART_CLEAR_PEF | UART_CLEAR_FEF);
       return UBX_MSG_UNKNOWN;
    }
-   rx_byte = (uint8_t)(UART4->RDR & 0x00FFU);
+   rx_byte = (uint8_t)(GPS_UART->RDR & 0x00FFU);
 
    // Process incoming UBX bytes character-by-character
    switch (ubx_packet_state)
@@ -496,6 +503,7 @@ static uint8_t gps_verify_or_set_gnss_config(void)
       calculate_length_and_checksum(ubx_gnss_cfg_set, sizeof(ubx_gnss_cfg_set));
       gps_send_and_receive(UBX_ACK_ACK, ubx_gnss_cfg_set, sizeof(ubx_gnss_cfg_set));
       configuration_changed = 1;
+      HAL_Delay(500);
    }
    return configuration_changed;
 }
@@ -554,12 +562,13 @@ static uint8_t gps_verify_or_set_lna_gain(void)
    uint8_t ubx_valget_lna[] = { UBX_SYNC, UBX_CFG_VALGET_MSG, UBX_MSG_LEN_PLACEHOLDER, UBX_CFG_VALGET_BEGIN, UBX_GET_LNA_DATA, UBX_MSG_CKSUM_PLACEHOLDER };
    calculate_length_and_checksum(ubx_valget_lna, sizeof(ubx_valget_lna));
    gps_send_and_receive(UBX_CFG_VALGET, ubx_valget_lna, sizeof(ubx_valget_lna));
-   if ((lna_gain_t)gps_rx_buffer[UBX_MSG_PAYLOAD_OFFSET + LNA_MSG_GAIN_OFFSET] != LNA_GAIN_NORMAL)
+   if (gps_rx_buffer[UBX_MSG_PAYLOAD_OFFSET + LNA_MSG_GAIN_OFFSET] != HW_RF_LNA_MODE)
    {
       uint8_t ubx_valset_lna[] = { UBX_SYNC, UBX_CFG_VALSET_MSG, UBX_MSG_LEN_PLACEHOLDER, UBX_CFG_VALSET_BEGIN, UBX_SET_LNA_DATA, UBX_MSG_CKSUM_PLACEHOLDER };
       calculate_length_and_checksum(ubx_valset_lna, sizeof(ubx_valset_lna));
       gps_send_and_receive(UBX_ACK_ACK, ubx_valset_lna, sizeof(ubx_valset_lna));
       configuration_changed = 1;
+      HAL_Delay(500);
    }
    return configuration_changed;
 }
@@ -574,7 +583,7 @@ void EXTI3_IRQHandler(void)
    gps_timepulse_fired = 1;
 }
 
-void UART4_IRQHandler(void)
+void GPS_UART_IRQHandler(void)
 {
    // Create static indices to keep track of the location of unprocessed data
    static uint32_t previous_data_index = 0;
@@ -586,10 +595,10 @@ void UART4_IRQHandler(void)
    __DMB();
 
    // Ensure that this interrupt was due to an idle line
-   if (READ_BIT(UART4->ISR, USART_ISR_IDLE))
+   if (READ_BIT(GPS_UART->ISR, USART_ISR_IDLE))
    {
       // Clear the interrupt
-      WRITE_REG(UART4->ICR, UART_CLEAR_IDLEF);
+      WRITE_REG(GPS_UART->ICR, UART_CLEAR_IDLEF);
 
       // Determine whether data wrapping is necessary due to the circular buffer
       if (data_end_index >= previous_data_index)
@@ -622,18 +631,25 @@ void UART4_IRQHandler(void)
 void gps_init(void)
 {
    // Initialize the various GPIO clocks
+#if REV_ID == REV_A
    SET_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOAEN);
    (void)READ_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOAEN);
    SET_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIODEN);
    (void)READ_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIODEN);
+#else
+   SET_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOBEN);
+   (void)READ_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOBEN);
+   SET_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOEEN);
+   (void)READ_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOEEN);
+#endif
 
    // Initialize the DMA1 clock
    SET_BIT(RCC->AHB1ENR, RCC_AHB1ENR_DMA1EN);
    (void)READ_BIT(RCC->AHB1ENR, RCC_AHB1ENR_DMA1EN);
 
-   // Initialize the UART4 peripheral clock
-   SET_BIT(RCC->APB1LENR, RCC_APB1LENR_UART4EN);
-   (void)READ_BIT(RCC->APB1LENR, RCC_APB1LENR_UART4EN);
+   // Initialize the GPS UART peripheral clock
+   SET_BIT(RCC->APB1LENR, GPS_UART_CONCAT(RCC_APB1LENR_, GPS_UART_TYPE, GPS_UART_NUMBER, EN));
+   (void)READ_BIT(RCC->APB1LENR, GPS_UART_CONCAT(RCC_APB1LENR_, GPS_UART_TYPE, GPS_UART_NUMBER, EN));
    MODIFY_REG(RCC->D2CCIP2R, RCC_D2CCIP2R_USART28SEL, (uint32_t)RCC_USART234578CLKSOURCE_D2PCLK1);
 
    // Initialize the SYSCFG clock
@@ -651,7 +667,11 @@ void gps_init(void)
    uint32_t iocurrent = GPS_TIMEPULSE_Pin & (1UL << position);
    CLEAR_BIT(GPS_TIMEPULSE_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
    MODIFY_REG(GPS_TIMEPULSE_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_IT_RISING & GPIO_MODE) << (position * 2U)));
+#if REV_ID == REV_A
    CLEAR_BIT(SYSCFG->EXTICR[position >> 2U], (0x0FUL << (4U * (position & 0x03U))));
+#else
+   MODIFY_REG(SYSCFG->EXTICR[position >> 2U], (0x0FUL << (4U * (position & 0x03U))), (4UL << (4U * (position & 0x03U))));
+#endif
    SET_BIT(EXTI->RTSR1, iocurrent);
    CLEAR_BIT(EXTI->FTSR1, iocurrent);
    CLEAR_BIT(EXTI_D2->EMR1, iocurrent);
@@ -659,67 +679,72 @@ void gps_init(void)
    NVIC_SetPriority(EXTI3_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 0, 0));
    NVIC_EnableIRQ(EXTI3_IRQn);
 
-   // Initialize the UART4 GPIO pins
+   // Initialize the GPS UART GPIO pins
    position = 32 - __builtin_clz(GPS_TX_Pin) - 1;
    MODIFY_REG(GPS_TX_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_HIGH << (position * 2U)));
    MODIFY_REG(GPS_TX_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_AF_PP & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
    CLEAR_BIT(GPS_TX_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
-   MODIFY_REG(GPS_TX_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (GPIO_AF8_UART4 << ((position & 0x07U) * 4U)));
+   MODIFY_REG(GPS_TX_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (GPS_UART_AF << ((position & 0x07U) * 4U)));
    MODIFY_REG(GPS_TX_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_AF_PP & GPIO_MODE) << (position * 2U)));
    position = 32 - __builtin_clz(GPS_RX_Pin) - 1;
    MODIFY_REG(GPS_RX_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_HIGH << (position * 2U)));
    MODIFY_REG(GPS_RX_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_AF_PP & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
    CLEAR_BIT(GPS_RX_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
-   MODIFY_REG(GPS_RX_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (GPIO_AF8_UART4 << ((position & 0x07U) * 4U)));
+   MODIFY_REG(GPS_RX_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (GPS_UART_AF << ((position & 0x07U) * 4U)));
    MODIFY_REG(GPS_RX_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_AF_PP & GPIO_MODE) << (position * 2U)));
 
-   // Initialize DMA1 Stream2 for UART4
+   // Initialize DMA1 Stream2 for the GPS UART
    CLEAR_BIT(DMA1_Stream2->CR, DMA_SxCR_EN);
    while (READ_BIT(DMA1_Stream2->CR, DMA_SxCR_EN));
    MODIFY_REG(DMA1_Stream2->CR,
               (DMA_SxCR_MBURST | DMA_SxCR_PBURST | DMA_SxCR_PL | DMA_SxCR_MSIZE | DMA_SxCR_PSIZE | DMA_SxCR_MINC | DMA_SxCR_PINC | DMA_SxCR_CIRC | DMA_SxCR_DIR | DMA_SxCR_CT | DMA_SxCR_DBM),
               (DMA_PERIPH_TO_MEMORY | DMA_MINC_ENABLE | DMA_PDATAALIGN_BYTE | DMA_MDATAALIGN_BYTE | DMA_CIRCULAR | DMA_PRIORITY_LOW | DMA_SxCR_TRBUFF));
    CLEAR_BIT(DMA1_Stream2->FCR, (DMA_SxFCR_DMDIS | DMA_SxFCR_FTH));
-   WRITE_REG(DMAMUX1_Channel2->CCR, DMA_REQUEST_UART4_RX);
+   WRITE_REG(DMAMUX1_Channel2->CCR, GPS_UART_CONCAT(DMA_REQUEST_, GPS_UART_TYPE, GPS_UART_NUMBER, _RX));
    WRITE_REG(DMAMUX1_ChannelStatus->CFR, (1UL << (2 & 0x1FU)));
 
-   // Initialize the UART4 peripheral
-   CLEAR_BIT(UART4->CR1, USART_CR1_UE);
-   while (READ_BIT(UART4->CR1, USART_CR1_UE));
-   MODIFY_REG(UART4->CR1, (USART_CR1_M | USART_CR1_PCE | USART_CR1_PS | USART_CR1_TE | USART_CR1_RE | USART_CR1_OVER8 | USART_CR1_FIFOEN), UART_MODE_TX_RX);
-   CLEAR_BIT(UART4->CR2, USART_CR2_STOP);
-   CLEAR_BIT(UART4->CR3, USART_CR3_RTSE | USART_CR3_CTSE | USART_CR3_ONEBIT | USART_CR3_TXFTCFG | USART_CR3_RXFTCFG);
-   CLEAR_BIT(UART4->PRESC, USART_PRESC_PRESCALER);
-   WRITE_REG(UART4->BRR, (uint16_t)UART_DIV_SAMPLING16(HAL_RCC_GetPCLK1Freq(), 38400, 0));
-   CLEAR_BIT(UART4->CR2, (USART_CR2_LINEN | USART_CR2_CLKEN));
-   CLEAR_BIT(UART4->CR3, (USART_CR3_SCEN | USART_CR3_HDSEL | USART_CR3_IREN));
-   SET_BIT(UART4->CR1, USART_CR1_UE);
-   if (READ_BIT(UART4->CR1, USART_CR1_TE))
-      while (!READ_BIT(UART4->ISR, USART_ISR_TEACK));
-   if (READ_BIT(UART4->CR1, USART_CR1_RE))
-      while (!READ_BIT(UART4->ISR, USART_ISR_REACK));
-   NVIC_SetPriority(UART4_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 0, 0));
-   NVIC_EnableIRQ(UART4_IRQn);
+   // Initialize the GPS UART peripheral
+   CLEAR_BIT(GPS_UART->CR1, USART_CR1_UE);
+   while (READ_BIT(GPS_UART->CR1, USART_CR1_UE));
+   MODIFY_REG(GPS_UART->CR1, (USART_CR1_M | USART_CR1_PCE | USART_CR1_PS | USART_CR1_TE | USART_CR1_RE | USART_CR1_OVER8 | USART_CR1_FIFOEN), UART_MODE_TX_RX);
+   CLEAR_BIT(GPS_UART->CR2, USART_CR2_STOP);
+   CLEAR_BIT(GPS_UART->CR3, USART_CR3_RTSE | USART_CR3_CTSE | USART_CR3_ONEBIT | USART_CR3_TXFTCFG | USART_CR3_RXFTCFG);
+   CLEAR_BIT(GPS_UART->PRESC, USART_PRESC_PRESCALER);
+   WRITE_REG(GPS_UART->BRR, (uint16_t)UART_DIV_SAMPLING16(HAL_RCC_GetPCLK1Freq(), 38400, 0));
+   CLEAR_BIT(GPS_UART->CR2, (USART_CR2_LINEN | USART_CR2_CLKEN));
+   CLEAR_BIT(GPS_UART->CR3, (USART_CR3_SCEN | USART_CR3_HDSEL | USART_CR3_IREN));
+   SET_BIT(GPS_UART->CR1, USART_CR1_UE);
+   if (READ_BIT(GPS_UART->CR1, USART_CR1_TE))
+      while (!READ_BIT(GPS_UART->ISR, USART_ISR_TEACK));
+   if (READ_BIT(GPS_UART->CR1, USART_CR1_RE))
+      while (!READ_BIT(GPS_UART->ISR, USART_ISR_REACK));
+   NVIC_SetPriority(GPS_UART_CONCAT(, GPS_UART_TYPE, GPS_UART_NUMBER, _IRQn), NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 0, 0));
+   NVIC_EnableIRQ(GPS_UART_CONCAT(, GPS_UART_TYPE, GPS_UART_NUMBER, _IRQn));
 
-   // Configure the UART4 DMA buffer addresses and sizes
-   WRITE_REG(DMA1_Stream2->PAR, (uint32_t)&UART4->RDR);
+   // Configure the GPS UART DMA buffer addresses and sizes
+   WRITE_REG(DMA1_Stream2->PAR, (uint32_t)&GPS_UART->RDR);
    WRITE_REG(DMA1_Stream2->M0AR, (uint32_t)gps_rx_buffer);
    WRITE_REG(DMA1_Stream2->NDTR, sizeof(gps_rx_buffer));
    CLEAR_BIT(DMA1_Stream2->CR, (DMA_IT_TC | DMA_IT_TE | DMA_IT_DME | DMA_IT_HT));
 
    // Ensure that all configuration parameters are correctly set
-   // TODO: Do we need to do a software reset to make sure these changes kick in?
-   gps_wait_until_ready();
-   gps_verify_or_set_interface_config();
-   gps_verify_or_set_gnss_config();
-   gps_verify_or_set_configuration();
-   gps_verify_or_set_lna_gain();
+   uint8_t config_changed = 1;
+   while (config_changed)
+   {
+     gps_wait_until_ready();
+     config_changed = gps_verify_or_set_interface_config();
+     config_changed = gps_verify_or_set_gnss_config() || config_changed;
+     config_changed = gps_verify_or_set_configuration() || config_changed;
+     config_changed = gps_verify_or_set_lna_gain() || config_changed;
+     if (config_changed)
+       gps_reset();
+   }
 
    // Start listening for packets using DMA until an idle line is detected
    SET_BIT(DMA1_Stream2->CR, DMA_SxCR_EN);
-   ATOMIC_SET_BIT(UART4->CR3, USART_CR3_DMAR);
-   WRITE_REG(UART4->ICR, UART_CLEAR_IDLEF);
-   ATOMIC_SET_BIT(UART4->CR1, USART_CR1_IDLEIE);
+   ATOMIC_SET_BIT(GPS_UART->CR3, USART_CR3_DMAR);
+   WRITE_REG(GPS_UART->ICR, UART_CLEAR_IDLEF);
+   ATOMIC_SET_BIT(GPS_UART->CR1, USART_CR1_IDLEIE);
 }
 
 uint8_t gps_get_timepulse_fired(void)

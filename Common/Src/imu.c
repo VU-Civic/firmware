@@ -1212,16 +1212,15 @@ typedef enum
 #define DMP_Motion_Event_Control_BAC_Wearable               0x8000
 
 // I2C Definitions
-#define I2C_DEVICE_ADDRESS     208
+#define I2C_IMU_DEVICE_ADDRESS      208
+#if REV_ID == REV_A
+  #define I2C_IMU_INT_IRQn            EXTI15_10_IRQn
+#else
+  #define I2C_IMU_INT_IRQn            EXTI9_5_IRQn
+#endif
 
 
 // IMU Data Type Definitions -------------------------------------------------------------------------------------------
-
-typedef struct
-{
-   volatile uint32_t ISR;
-   volatile uint32_t IFCR;
-} bdma_int_registers_t;
 
 typedef struct __attribute__ ((__packed__))
 {
@@ -1251,15 +1250,19 @@ void I2C4_ER_IRQHandler(void)
    // Clear all I2C4 error interrupts so that reading can continue
    WRITE_REG(I2C4->ICR, (I2C_FLAG_ARLO | I2C_FLAG_BERR | I2C_FLAG_OVR | I2C_FLAG_PECERR));
    CLEAR_BIT(I2C4->CR2, (I2C_CR2_HEAD10R | I2C_CR2_NBYTES | I2C_CR2_RELOAD | I2C_CR2_AUTOEND | I2C_CR2_RD_WRN));
-   NVIC_EnableIRQ(EXTI15_10_IRQn);
+   NVIC_EnableIRQ(I2C_IMU_INT_IRQn);
    NVIC_DisableIRQ(I2C4_EV_IRQn);
 }
 
+#if REV_ID == REV_A
 void EXTI15_10_IRQHandler(void)
+#else
+void IMU_Int_IRQHandler(void)
+#endif
 {
    // Clear the data-ready interrupt and toggle relevant interrupt lines
    WRITE_REG(EXTI->C2PR1, IMU_INT_Pin);
-   NVIC_DisableIRQ(EXTI15_10_IRQn);
+   NVIC_DisableIRQ(I2C_IMU_INT_IRQn);
    NVIC_EnableIRQ(I2C4_EV_IRQn);
 
    // Prepare the BDMA to read the FIFO data count
@@ -1288,7 +1291,7 @@ void I2C4_EV_IRQHandler(void)
       // Clear the NACK error flag and re-enable data-ready interrupts
       WRITE_REG(I2C4->ICR, I2C_FLAG_AF);
       NVIC_DisableIRQ(I2C4_EV_IRQn);
-      NVIC_EnableIRQ(EXTI15_10_IRQn);
+      NVIC_EnableIRQ(I2C_IMU_INT_IRQn);
    }
 }
 
@@ -1324,7 +1327,7 @@ void BDMA_Channel0_IRQHandler(void)
       NVIC_EnableIRQ(I2C4_EV_IRQn);
    }
    else
-      NVIC_EnableIRQ(EXTI15_10_IRQn);
+      NVIC_EnableIRQ(I2C_IMU_INT_IRQn);
 }
 
 
@@ -1467,7 +1470,11 @@ void imu_init(void)
    uint32_t iocurrent = IMU_INT_Pin & (1UL << position);
    CLEAR_BIT(IMU_INT_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
    MODIFY_REG(IMU_INT_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_IT_FALLING & GPIO_MODE) << (position * 2U)));
+#if REV_ID == REV_A
    MODIFY_REG(SYSCFG->EXTICR[position >> 2U], (0x0FUL << (4U * (position & 0x03U))), (5UL << (4U * (position & 0x03U))));
+#else
+   MODIFY_REG(SYSCFG->EXTICR[position >> 2U], (0x0FUL << (4U * (position & 0x03U))), (1UL << (4U * (position & 0x03U))));
+#endif
    CLEAR_BIT(EXTI->RTSR1, iocurrent);
    SET_BIT(EXTI->FTSR1, iocurrent);
    CLEAR_BIT(EXTI_D2->EMR1, iocurrent);
@@ -1478,13 +1485,13 @@ void imu_init(void)
    MODIFY_REG(IMU_SCL_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_MEDIUM << (position * 2U)));
    MODIFY_REG(IMU_SCL_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_AF_OD & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
    CLEAR_BIT(IMU_SCL_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
-   MODIFY_REG(IMU_SCL_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (GPIO_AF4_I2C4 << ((position & 0x07U) * 4U)));
+   MODIFY_REG(IMU_SCL_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (IMU_I2C_AF << ((position & 0x07U) * 4U)));
    MODIFY_REG(IMU_SCL_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_AF_OD & GPIO_MODE) << (position * 2U)));
    position = 32 - __builtin_clz(IMU_SDA_Pin) - 1;
    MODIFY_REG(IMU_SDA_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_MEDIUM << (position * 2U)));
    MODIFY_REG(IMU_SDA_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_AF_OD & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
    CLEAR_BIT(IMU_SDA_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
-   MODIFY_REG(IMU_SDA_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (GPIO_AF4_I2C4 << ((position & 0x07U) * 4U)));
+   MODIFY_REG(IMU_SDA_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (IMU_I2C_AF << ((position & 0x07U) * 4U)));
    MODIFY_REG(IMU_SDA_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_AF_OD & GPIO_MODE) << (position * 2U)));
 
    // Initialize BDMA Channel0 for I2C4_RX
@@ -1505,9 +1512,9 @@ void imu_init(void)
    WRITE_REG(I2C4->CR1, 0);
    WRITE_REG(I2C4->TIMINGR, 0x10911A50);
    CLEAR_BIT(I2C4->OAR1, I2C_OAR1_OA1EN);
-   WRITE_REG(I2C4->OAR1, (I2C_OAR1_OA1EN | I2C_DEVICE_ADDRESS));
+   WRITE_REG(I2C4->OAR1, (I2C_OAR1_OA1EN | I2C_IMU_DEVICE_ADDRESS));
    WRITE_REG(I2C4->OAR2, 0);
-   MODIFY_REG(I2C4->CR2, (I2C_CR2_ADD10 | I2C_CR2_SADD), (uint32_t)I2C_DEVICE_ADDRESS);
+   MODIFY_REG(I2C4->CR2, (I2C_CR2_ADD10 | I2C_CR2_SADD), (uint32_t)I2C_IMU_DEVICE_ADDRESS);
    SET_BIT(I2C4->CR1, (I2C_CR1_ERRIE | I2C_CR1_TCIE | I2C_CR1_NACKIE | I2C_CR1_RXDMAEN | I2C_CR1_PE));
 
    // Wait until IMU boots and is available
@@ -1809,8 +1816,8 @@ void imu_start(void)
    NVIC_EnableIRQ(I2C4_ER_IRQn);
    NVIC_SetPriority(I2C4_EV_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 0, 2));
    NVIC_EnableIRQ(I2C4_EV_IRQn);
-   NVIC_SetPriority(EXTI3_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 0, 3));
-   NVIC_EnableIRQ(EXTI15_10_IRQn);
+   NVIC_SetPriority(I2C_IMU_INT_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 0, 3));
+   NVIC_EnableIRQ(I2C_IMU_INT_IRQn);
 }
 
 void imu_update_packet_orientation(void)

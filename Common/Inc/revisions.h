@@ -7,6 +7,7 @@
 
 #define REV_A                    0x01
 #define REV_B                    0x02
+#define REV_C                    0x03
 
 #define REV(rev)                 REV_ ## rev
 #define REVISION(rev)            REV(rev)

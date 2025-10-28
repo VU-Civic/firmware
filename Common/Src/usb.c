@@ -701,7 +701,9 @@ static int8_t CDC_TransmitCplt(uint8_t *pbuf, uint32_t *len, uint8_t epnum)
 static void usb_set_led_status(uint8_t on)
 {
    // Set the USB status LED to the requested state
+#if REV_ID == REV_A
    LED_USB_STATUS_GPIO_Port->BSRR = on ? LED_USB_STATUS_Pin : ((uint32_t)LED_USB_STATUS_Pin << 16U);
+#endif
 }
 
 
@@ -911,19 +913,24 @@ void OTG_FS_IRQHandler(void)
 void usb_init(void)
 {
    // Initialize the various GPIO clocks
+   uint32_t position;
    SET_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOAEN);
    (void)READ_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOAEN);
+#if REV_ID == REV_A
    SET_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIODEN);
    (void)READ_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIODEN);
+#endif
    MODIFY_REG(RCC->AHB1LPENR, RCC_AHB1LPENR_USB2OTGHSULPILPEN, RCC_AHB1LPENR_USB2OTGHSLPEN);
 
    // Initialize the non-peripheral GPIO pins
+#if REV_ID == REV_A
    LED_USB_STATUS_GPIO_Port->BSRR = (uint32_t)LED_USB_STATUS_Pin << 16U;
-   uint32_t position = 32 - __builtin_clz(LED_USB_STATUS_Pin) - 1;
+   position = 32 - __builtin_clz(LED_USB_STATUS_Pin) - 1;
    MODIFY_REG(LED_USB_STATUS_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_LOW << (position * 2U)));
    MODIFY_REG(LED_USB_STATUS_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_OUTPUT_PP & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
    CLEAR_BIT(LED_USB_STATUS_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
    MODIFY_REG(LED_USB_STATUS_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_OUTPUT_PP & GPIO_MODE) << (position * 2U)));
+#endif
 
    // Initialize the USB GPIO pins
    position = 32 - __builtin_clz(USB_DM_Pin) - 1;
