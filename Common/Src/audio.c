@@ -8,69 +8,70 @@
 
 // PDM-to-TDM Converter Chip Register Definitions ----------------------------------------------------------------------
 
-#define PAGE_CFG_REG      0x00
-#define SW_RESET_REG      0x01
-#define SLEEP_CFG_REG     0x02
-#define ASI_CFG0_REG      0x07
-#define ASI_CFG1_REG      0x08
-#define ASI_CFG2_REG      0x09
-#define ASI_CH1_REG       0x0B
-#define ASI_CH2_REG       0x0C
-#define ASI_CH3_REG       0x0D
-#define ASI_CH4_REG       0x0E
-#define MST_CFG0_REG      0x13
-#define MST_CFG1_REG      0x14
-#define ASI_STS_REG       0x15
-#define CLK_SRC_REG       0x16
-#define PDMCLK_CFG_REG    0x1F
-#define PDMIN_CFG_REG     0x20
-#define GPIO_CFG0_REG     0x21
-#define GPO_CFG0_REG      0x22
+#define PAGE_CFG_REG                0x00
+#define SW_RESET_REG                0x01
+#define SLEEP_CFG_REG               0x02
+#define ASI_CFG0_REG                0x07
+#define ASI_CFG1_REG                0x08
+#define ASI_CFG2_REG                0x09
+#define ASI_CH1_REG                 0x0B
+#define ASI_CH2_REG                 0x0C
+#define ASI_CH3_REG                 0x0D
+#define ASI_CH4_REG                 0x0E
+#define MST_CFG0_REG                0x13
+#define MST_CFG1_REG                0x14
+#define ASI_STS_REG                 0x15
+#define CLK_SRC_REG                 0x16
+#define PDMCLK_CFG_REG              0x1F
+#define PDMIN_CFG_REG               0x20
+#define GPIO_CFG0_REG               0x21
+#define GPO_CFG0_REG                0x22
 #if REV_ID == REV_A
-  #define GPO_CFG1_REG    0x23
-  #define GPO_CFG2_REG    0x24
-  #define GPO_CFG3_REG    0x25
+  #define GPO_CFG1_REG              0x23
+  #define GPO_CFG2_REG              0x24
+  #define GPO_CFG3_REG              0x25
 #endif
-#define GPO_VAL_REG       0x29
-#define GPIO_MON_REG      0x2A
-#define GPI_CFG0_REG      0x2B
+#define GPO_VAL_REG                 0x29
+#define GPIO_MON_REG                0x2A
+#define GPI_CFG0_REG                0x2B
 #if REV_ID == REV_A
-  #define GPI_CFG1_REG    0x2C
+  #define GPI_CFG1_REG              0x2C
 #endif
-#define GPI_MON_REG       0x2F
-#define INT_CFG_REG       0x32
-#define INT_MASK0_REG     0x33
-#define INT_LTCH0_REG     0x36
-#define BIAS_CFG_REG      0x3B
-#define CH1_CFG0_REG      0x3C
-#define CH1_CFG2_REG      0x3E
-#define CH1_CFG3_REG      0x3F
-#define CH1_CFG4_REG      0x40
-#define CH2_CFG0_REG      0x41
-#define CH2_CFG2_REG      0x43
-#define CH2_CFG3_REG      0x44
-#define CH2_CFG4_REG      0x45
-#define CH3_CFG0_REG      0x46
-#define CH3_CFG2_REG      0x48
-#define CH3_CFG3_REG      0x49
-#define CH3_CFG4_REG      0x4A
-#define CH4_CFG0_REG      0x4B
-#define CH4_CFG2_REG      0x4D
-#define CH4_CFG3_REG      0x4E
-#define CH4_CFG4_REG      0x4F
-#define DSP_CFG0_REG      0x6B
-#define DSP_CFG1_REG      0x6C
-#define IN_CH_EN_REG      0x73
-#define ASI_OUT_CH_EN_REG 0x74
-#define PWR_CFG_REG       0x75
-#define DEV_STS0_REG      0x76
-#define DEV_STS1_REG      0x77
-#define I2C_CKSUM_REG     0x7E
+#define GPI_MON_REG                 0x2F
+#define INT_CFG_REG                 0x32
+#define INT_MASK0_REG               0x33
+#define INT_LTCH0_REG               0x36
+#define BIAS_CFG_REG                0x3B
+#define CH1_CFG0_REG                0x3C
+#define CH1_CFG2_REG                0x3E
+#define CH1_CFG3_REG                0x3F
+#define CH1_CFG4_REG                0x40
+#define CH2_CFG0_REG                0x41
+#define CH2_CFG2_REG                0x43
+#define CH2_CFG3_REG                0x44
+#define CH2_CFG4_REG                0x45
+#define CH3_CFG0_REG                0x46
+#define CH3_CFG2_REG                0x48
+#define CH3_CFG3_REG                0x49
+#define CH3_CFG4_REG                0x4A
+#define CH4_CFG0_REG                0x4B
+#define CH4_CFG2_REG                0x4D
+#define CH4_CFG3_REG                0x4E
+#define CH4_CFG4_REG                0x4F
+#define DSP_CFG0_REG                0x6B
+#define DSP_CFG1_REG                0x6C
+#define IN_CH_EN_REG                0x73
+#define ASI_OUT_CH_EN_REG           0x74
+#define PWR_CFG_REG                 0x75
+#define DEV_STS0_REG                0x76
+#define DEV_STS1_REG                0x77
+#define I2C_CKSUM_REG               0x7E
+
+// I2C Definitions
+#define I2C_MICS_DEVICE_ADDRESS     156
 
 
 // Audio Definitions and Static Variables ------------------------------------------------------------------------------
-
-#define AUDIO_NUM_DMAS_PER_CLIP         (AUDIO_SAMPLE_RATE_HZ * AUDIO_NUM_CHANNELS / AUDIO_BUFFER_SAMPLES)
 
 __attribute__((aligned (4), section (".dtcm")))
 static int16_t audio_data[2][AUDIO_NUM_CHANNELS][AUDIO_BUFFER_SAMPLES / AUDIO_NUM_CHANNELS];
@@ -103,7 +104,7 @@ void MDMA_IRQHandler(void)
       data.audio_read_index = (READ_BIT(DMA1_Stream0->CR, DMA_SxCR_CT) == 0U);
       data.audio_clip_complete = READ_BIT(GPS_TIME_TRIGGER_GPIO_Port->IDR, GPS_TIME_TRIGGER_Pin);
 
-      // Initiate transfer of one audio channel to the other core
+      // Initiate transfer of audio channels to the other core
       WRITE_REG(MDMA_Channel2->CBNDTR, sizeof(data.audio[0]) & MDMA_CBNDTR_BNDT);
       WRITE_REG(MDMA_Channel2->CSAR, (uint32_t)audio_data[data.audio_read_index][0]);
       WRITE_REG(MDMA_Channel2->CDAR, (uint32_t)data.audio[data.audio_read_index]);
@@ -135,7 +136,26 @@ static void audio_write_reg(uint8_t reg, uint8_t data)
 
 #else
 
-   // TODO: Implement I2C comms
+   // Write register number to the TXDR register and initiate the transfer
+   WRITE_REG(I2C2->TXDR, reg);
+   MODIFY_REG(I2C2->CR2,
+              (I2C_CR2_NBYTES | I2C_CR2_RELOAD | I2C_CR2_AUTOEND | I2C_CR2_RD_WRN | I2C_CR2_START | I2C_CR2_STOP),
+              (((2 << I2C_CR2_NBYTES_Pos) & I2C_CR2_NBYTES) | I2C_AUTOEND_MODE | I2C_GENERATE_START_WRITE));
+
+   // Wait until ready to transmit the data byte
+   uint8_t success = 1;
+   while (success && !READ_BIT(I2C2->ISR, I2C_FLAG_TXIS))
+      if (READ_BIT(I2C2->ISR, I2C_FLAG_AF | I2C_FLAG_ARLO | I2C_FLAG_BERR))
+         success = 0;
+   if (success)
+      WRITE_REG(I2C2->TXDR, data);
+
+   // Wait until transmission completes and clear flags
+   while (success && !READ_BIT(I2C2->ISR, I2C_FLAG_STOPF))
+      if (READ_BIT(I2C2->ISR, I2C_FLAG_AF | I2C_FLAG_ARLO | I2C_FLAG_BERR))
+         success = 0;
+   WRITE_REG(I2C2->ICR, (I2C_FLAG_STOPF | I2C_FLAG_AF | I2C_FLAG_ARLO | I2C_FLAG_BERR | I2C_FLAG_OVR | I2C_FLAG_PECERR | I2C_FLAG_TCR | I2C_FLAG_TC));
+   CLEAR_BIT(I2C2->CR2, (I2C_CR2_HEAD10R | I2C_CR2_NBYTES | I2C_CR2_RELOAD | I2C_CR2_AUTOEND | I2C_CR2_RD_WRN));
 
 #endif
 }
@@ -152,15 +172,15 @@ void audio_init(void)
    for (uint32_t i = 0; i < AUDIO_NUM_DMAS_PER_CLIP - 1; ++i)
       gps_trigger_states[i] = (uint32_t)GPS_TIME_TRIGGER_Pin << 16U;
 
-   // TODO: FIX ALL GPIO INIT STUFF FOR REVB USING I2C
-
    // Initialize the various GPIO clocks
+#if REV_ID == REV_A
    SET_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOAEN);
    (void)READ_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOAEN);
-   SET_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOBEN);
-   (void)READ_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOBEN);
    SET_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIODEN);
    (void)READ_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIODEN);
+#endif
+   SET_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOBEN);
+   (void)READ_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOBEN);
    SET_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOEEN);
    (void)READ_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOEEN);
 
@@ -172,14 +192,20 @@ void audio_init(void)
    SET_BIT(RCC->AHB3ENR, RCC_AHB3ENR_MDMAEN);
    (void)READ_BIT(RCC->AHB3ENR, RCC_AHB3ENR_MDMAEN);
 
-   // Initialize the SPI2 peripheral clock
+   // Initialize the SPI2 or I2C2 peripheral clock
+#if REV_ID == REV_A
    SET_BIT(RCC->APB1LENR, RCC_APB1LENR_SPI2EN);
    (void)READ_BIT(RCC->APB1LENR, RCC_APB1LENR_SPI2EN);
+#else
+   MODIFY_REG(RCC->D2CCIP2R, RCC_D2CCIP2R_I2C123SEL, RCC_I2C123CLKSOURCE_D2PCLK1);
+   SET_BIT(RCC->APB1LENR, RCC_APB1LENR_I2C2EN);
+   (void)READ_BIT(RCC->APB1LENR, RCC_APB1LENR_I2C2EN);
+#endif
 
    // Initialize the SAI peripheral clock
    CLEAR_BIT(RCC->CR, RCC_CR_PLL2ON);
    while (__HAL_RCC_GET_FLAG(RCC_FLAG_PLL2RDY) != 0U);
-   __HAL_RCC_PLL2_CONFIG(21, 289, 14, 2, 2);
+   __HAL_RCC_PLL2_CONFIG(21, 289, 14, 14, 14);
    __HAL_RCC_PLL2_VCIRANGE(RCC_PLL2VCIRANGE_0) ;
    __HAL_RCC_PLL2_VCORANGE(RCC_PLL2VCOMEDIUM) ;
    CLEAR_BIT(RCC->PLLCFGR, RCC_PLLCFGR_PLL2FRACEN);
@@ -194,19 +220,22 @@ void audio_init(void)
 
    // Initialize the non-peripheral GPIO pins
    WRITE_REG(GPS_TIME_TRIGGER_GPIO_Port->BSRR, (uint32_t)GPS_TIME_TRIGGER_Pin << 16U);
-   MICS_NRESET_GPIO_Port->BSRR = (uint32_t)MICS_NRESET_Pin << 16U;
    uint32_t position = 32 - __builtin_clz(GPS_TIME_TRIGGER_Pin) - 1;
    MODIFY_REG(GPS_TIME_TRIGGER_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_VERY_HIGH << (position * 2U)));
    MODIFY_REG(GPS_TIME_TRIGGER_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_OUTPUT_PP & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
    CLEAR_BIT(GPS_TIME_TRIGGER_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
    MODIFY_REG(GPS_TIME_TRIGGER_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_OUTPUT_PP & GPIO_MODE) << (position * 2U)));
+#if REV_ID == REV_A
+   MICS_NRESET_GPIO_Port->BSRR = (uint32_t)MICS_NRESET_Pin << 16U;
    position = 32 - __builtin_clz(MICS_NRESET_Pin) - 1;
    MODIFY_REG(MICS_NRESET_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_LOW << (position * 2U)));
    MODIFY_REG(MICS_NRESET_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_OUTPUT_PP & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
    CLEAR_BIT(MICS_NRESET_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
    MODIFY_REG(MICS_NRESET_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_OUTPUT_PP & GPIO_MODE) << (position * 2U)));
+#endif
 
-   // Initialize the SPI2 GPIO pins
+   // Initialize the SPI2 or I2C2 GPIO pins
+#if REV_ID == REV_A
    position = 32 - __builtin_clz(MICS_CS_Pin) - 1;
    MODIFY_REG(MICS_CS_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_MEDIUM << (position * 2U)));
    MODIFY_REG(MICS_CS_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_AF_PP & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
@@ -231,6 +260,20 @@ void audio_init(void)
    CLEAR_BIT(MICS_MOSI_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
    MODIFY_REG(MICS_MOSI_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (GPIO_AF5_SPI2 << ((position & 0x07U) * 4U)));
    MODIFY_REG(MICS_MOSI_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_AF_PP & GPIO_MODE) << (position * 2U)));
+#else
+   position = 32 - __builtin_clz(MICS_SCL_Pin) - 1;
+   MODIFY_REG(MICS_SCL_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_MEDIUM << (position * 2U)));
+   MODIFY_REG(MICS_SCL_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_AF_OD & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
+   CLEAR_BIT(MICS_SCL_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
+   MODIFY_REG(MICS_SCL_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (GPIO_AF4_I2C2 << ((position & 0x07U) * 4U)));
+   MODIFY_REG(MICS_SCL_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_AF_OD & GPIO_MODE) << (position * 2U)));
+   position = 32 - __builtin_clz(MICS_SDA_Pin) - 1;
+   MODIFY_REG(MICS_SDA_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_MEDIUM << (position * 2U)));
+   MODIFY_REG(MICS_SDA_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_AF_OD & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
+   CLEAR_BIT(MICS_SDA_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
+   MODIFY_REG(MICS_SDA_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (GPIO_AF4_I2C2 << ((position & 0x07U) * 4U)));
+   MODIFY_REG(MICS_SDA_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_AF_OD & GPIO_MODE) << (position * 2U)));
+#endif
 
    // Initialize the SAI GPIO pins
    position = 32 - __builtin_clz(AUDIO_SD_Pin) - 1;
@@ -246,20 +289,30 @@ void audio_init(void)
    MODIFY_REG(AUDIO_CLK_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (GPIO_AF10_SAI2 << ((position & 0x07U) * 4U)));
    MODIFY_REG(AUDIO_CLK_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_AF_PP & GPIO_MODE) << (position * 2U)));
    position = 32 - __builtin_clz(AUDIO_FSYNC_Pin) - 1;
-   MODIFY_REG(AUDIO_FSYNC_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_HIGH << (position * 2U)));
+   MODIFY_REG(AUDIO_FSYNC_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_VERY_HIGH << (position * 2U)));
    MODIFY_REG(AUDIO_FSYNC_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_AF_PP & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
    CLEAR_BIT(AUDIO_FSYNC_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
    MODIFY_REG(AUDIO_FSYNC_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (GPIO_AF10_SAI2 << ((position & 0x07U) * 4U)));
    MODIFY_REG(AUDIO_FSYNC_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_AF_PP & GPIO_MODE) << (position * 2U)));
 
-   // Initialize the SPI2 peripheral
+   // Initialize the SPI2 or I2C2 peripheral
+#if REV_ID == REV_A
    CLEAR_BIT(SPI2->CR1, SPI_CR1_SPE);
    while (READ_BIT(SPI2->CR1, SPI_CR1_SPE));
    uint32_t crc_length = SPI2->CFG1 & SPI_CFG1_CRCSIZE;
    MODIFY_REG(SPI2->CR1, SPI_CR1_MASRX, SPI_MASTER_RX_AUTOSUSP_DISABLE);
    WRITE_REG(SPI2->CFG1, (SPI_BAUDRATEPRESCALER_16 | crc_length | SPI_FIFO_THRESHOLD_02DATA | SPI_DATASIZE_8BIT));
-   WRITE_REG(SPI2->CFG2, (SPI_CFG2_AFCNTR | SPI_NSS_PULSE_ENABLE | SPI_NSS_HARD_OUTPUT | SPI_POLARITY_LOW | SPI_PHASE_2EDGE | SPI_MODE_MASTER | SPI_MASTER_KEEP_IO_STATE_DISABLE | SPI_CFG2_COMM_0));
+   WRITE_REG(SPI2->CFG2, (SPI_CFG2_AFCNTR | SPI_NSS_PULSE_ENABLE | SPI_NSS_HARD_OUTPUT | SPI_POLARITY_LOW | SPI_PHASE_2EDGE | SPI_MODE_MASTER | SPI_MASTER_KEEP_IO_STATE_ENABLE | SPI_DIRECTION_2LINES_TXONLY));
    CLEAR_BIT(SPI2->I2SCFGR, SPI_I2SCFGR_I2SMOD);
+#else
+   WRITE_REG(I2C2->CR1, 0);
+   WRITE_REG(I2C2->TIMINGR, 0x10911A50);
+   CLEAR_BIT(I2C2->OAR1, I2C_OAR1_OA1EN);
+   WRITE_REG(I2C2->OAR1, (I2C_OAR1_OA1EN | I2C_MICS_DEVICE_ADDRESS));
+   WRITE_REG(I2C2->OAR2, 0);
+   MODIFY_REG(I2C2->CR2, (I2C_CR2_ADD10 | I2C_CR2_SADD), (uint32_t)I2C_MICS_DEVICE_ADDRESS);
+   SET_BIT(I2C2->CR1, I2C_CR1_PE);
+#endif
 
    // Set up the SAI peripheral DMA
    CLEAR_BIT(DMA1_Stream0->CR, DMA_SxCR_EN);
@@ -395,15 +448,20 @@ void audio_init(void)
    audio_write_reg(GPIO_CFG0_REG, 0x00);
    audio_write_reg(GPO_CFG0_REG, 0x41);
    audio_write_reg(GPO_CFG1_REG, 0x41);
+   audio_write_reg(GPI_CFG0_REG, 0x54);
 #else
    audio_write_reg(GPIO_CFG0_REG, 0x41);
    audio_write_reg(GPO_CFG0_REG, 0x41);
+   audio_write_reg(GPI_CFG0_REG, 0x45);
 #endif
-   audio_write_reg(GPI_CFG0_REG, 0x54);
 
    // Configure PDM clock to output at 3.072MHz and latch on the appropriate edges
    audio_write_reg(PDMCLK_CFG_REG, 0x40);
+#if REV_ID == REV_A
    audio_write_reg(PDMIN_CFG_REG, 0xC0);
+#else
+   audio_write_reg(PDMIN_CFG_REG, 0x80);
+#endif
 
    // Configure output channel slot assignments
    audio_write_reg(ASI_CH1_REG, 0x00);
@@ -447,6 +505,11 @@ void audio_start(void)
 #include "usb.h"
 
 
+// Static Audio Variables ----------------------------------------------------------------------------------------------
+
+static volatile uint8_t new_audio_received;
+
+
 // Interrupt Service Routines ------------------------------------------------------------------------------------------
 
 void MDMA_IRQHandler(void)
@@ -458,10 +521,11 @@ void MDMA_IRQHandler(void)
    // Ensure that the interrupt is relevant to this CPU
    if (READ_BIT(MDMA_Channel2->CISR, (MDMA_FLAG_TE | MDMA_FLAG_BT)))
    {
-      // Clear the interrupt
+      // Clear the interrupt and set the new data flag
       WRITE_REG(MDMA_Channel2->CIFCR, (MDMA_FLAG_TE | MDMA_FLAG_BT));
+      new_audio_received = 1;
 
-      // Transmit new audio data over USB
+      // Transmit new audio data for external processing
       if (data.audio_clip_complete)
       {
          // Update the audio metadata before transmitting
@@ -486,10 +550,42 @@ void audio_init(void)
    memset((void*)&data, 0, sizeof(data));
    for (int i = 0; i < sizeof(packet_delimiter); ++i)
       data.delimiter[i] = packet_delimiter[i];
+   new_audio_received = 0;
 
    // Enable data transfer completion interrupts
    NVIC_SetPriority(MDMA_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 0, 0));
    NVIC_EnableIRQ(MDMA_IRQn);
+}
+
+uint8_t audio_process_new_data(cell_audio_transmit_command_t transmit_evidence)
+{
+   // Only proceed if there is new unprocessed audio data
+   const uint8_t data_processed = new_audio_received;
+   if (new_audio_received)
+   {
+      // Encode the audio data
+      new_audio_received = 0;
+      const opus_frame_t *result_begin, *result_end;
+      opusenc_encode((int16_t*)data.audio[data.audio_read_index], &result_begin, &result_end);
+
+      // Transmit historical data if new evidence transmission was requested
+      if (transmit_evidence == CELL_AUDIO_TRANSMIT_BEGIN)
+      {
+         const opus_frame_t *history_start = opusenc_get_history(), *frame = opusenc_get_history();
+         do {
+            cell_transmit_audio(frame, 0);
+            frame = frame->next;
+         } while (frame != history_start);
+      }
+
+      // Optionally transmit the newly encoded data over the cellular network
+      if (transmit_evidence != CELL_AUDIO_NO_TRANSMIT)
+         for (const opus_frame_t *frame = result_begin; frame != result_end; frame = frame->next)
+            cell_transmit_audio(frame, (transmit_evidence == CELL_AUDIO_TRANSMIT_END) && (frame->next == result_end));
+   }
+
+   // Return whether this function call actually processed anything
+   return data_processed;
 }
 
 #endif  // #ifdef CORE_CM7
