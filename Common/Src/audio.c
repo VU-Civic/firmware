@@ -498,6 +498,7 @@ void audio_start(void)
 
 // Header Inclusions ---------------------------------------------------------------------------------------------------
 
+#include "ai.h"
 #include "audio.h"
 #include "cellular.h"
 #include "gps.h"
@@ -526,6 +527,7 @@ void MDMA_IRQHandler(void)
       new_audio_received = 1;
 
       // Transmit new audio data for external processing
+      ai_send((uint8_t*)data.audio[data.audio_read_index], raw_packet_size);
       if (data.audio_clip_complete)
       {
          // Update the audio metadata before transmitting

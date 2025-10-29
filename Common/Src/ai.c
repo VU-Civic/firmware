@@ -218,11 +218,11 @@ void ai_send(const uint8_t *data, uint16_t data_length)
    CLEAR_BIT(SPI2->CFG1, SPI_CFG1_TXDMAEN);
    CLEAR_BIT(DMA2_Stream2->CR, DMA_SxCR_EN);
    WRITE_REG(spi2_dma_int_registers->IFCR, (0x3FUL << DMA_STREAM2_6_INDEX));
-   WRITE_REG(DMA2_Stream2->NDTR, data_length);
+   WRITE_REG(DMA2_Stream2->NDTR, data_length / 4);
    WRITE_REG(DMA2_Stream2->M0AR, (uint32_t)data);
    MODIFY_REG(DMA2_Stream2->CR, (DMA_IT_TC | DMA_IT_TE | DMA_IT_DME | DMA_IT_HT), (DMA_IT_TC | DMA_IT_TE | DMA_IT_DME));
    SET_BIT(DMA2_Stream2->CR, DMA_SxCR_EN);
-   MODIFY_REG(SPI2->CR2, SPI_CR2_TSIZE, data_length);
+   MODIFY_REG(SPI2->CR2, SPI_CR2_TSIZE, data_length / 4);
    SET_BIT(SPI2->CFG1, SPI_CFG1_TXDMAEN);
    SET_BIT(SPI2->CR1, SPI_CR1_SPE);
    SET_BIT(SPI2->CR1, SPI_CR1_CSTART);
