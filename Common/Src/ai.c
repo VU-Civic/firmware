@@ -10,17 +10,17 @@
 // AI Data Type Definitions --------------------------------------------------------------------------------------------
 
 #define I2C_AI_DEVICE_ADDRESS      144
+#define I2C_FROM_AI_INT_IRQn       EXTI9_5_IRQn
 
 typedef struct __attribute__ ((__packed__))
 {
-   int16_t header;
+   uint8_t num_detections;
    int16_t footer;
 } ai_data_t;
 
 
 // Static AI Communication Variables -----------------------------------------------------------------------------------
 
-// TODO: THESE SHOULD PROBABLY BE SOMEWHERE ELSE
 __attribute__((aligned (4), section (".ramd3")))
 static volatile ai_data_t ai_data;
 
@@ -30,6 +30,8 @@ static volatile uint16_t ai_data_count;
 static dma_int_registers_t *spi2_dma_int_registers;
 static dma_int_registers_t *i2c3_dma_int_registers;
 
+static volatile uint8_t new_ai_detections;
+
 
 // Interrupt Service Routines ------------------------------------------------------------------------------------------
 
@@ -37,10 +39,10 @@ void DMA2_Stream2_IRQHandler(void)
 {
    // Clear the interrupt register contents
    const uint32_t register_contents = spi2_dma_int_registers->ISR;
-   spi2_dma_int_registers->IFCR = spi2_dma_int_registers->ISR;
+   WRITE_REG(spi2_dma_int_registers->IFCR, register_contents);
 
    // Enable the SPI end-of-transfer interrupt if DMA transfer complete
-   if ((register_contents & (DMA_FLAG_TCIF0_4 << DMA_STREAM2_6_INDEX)))
+   if (READ_BIT(register_contents, (DMA_FLAG_TCIF0_4 << DMA_STREAM2_6_INDEX)))
       SET_BIT(SPI2->IER, SPI_IT_EOT);
 }
 
@@ -62,6 +64,53 @@ void AI_Int_IRQHandler(void)
 {
    // Clear the data-ready interrupt
    WRITE_REG(EXTI->C2PR1, FROM_AI_INT_Pin);
+
+   // Prepare the DMA to read the AI data count
+   ai_data_count = 0;
+   CLEAR_BIT(DMA2_Stream0->CR, DMA_SxCR_EN);
+   WRITE_REG(DMA2_Stream0->M0AR, (uint32_t)&ai_data_count);
+   WRITE_REG(DMA2_Stream0->NDTR, sizeof(ai_data_count));
+   SET_BIT(DMA2_Stream0->CR, DMA_SxCR_EN);
+
+   // Initiate the AI data read
+   MODIFY_REG(I2C3->CR2, (I2C_CR2_NBYTES | I2C_AUTOEND_MODE), (((DMA2_Stream0->NDTR << I2C_CR2_NBYTES_Pos) & I2C_CR2_NBYTES) | I2C_RELOAD_MODE | I2C_GENERATE_START_READ));
+}
+
+void I2C3_ER_IRQHandler(void)
+{
+   // Clear all I2C3 error interrupts so that reading can continue
+   ai_data_count = 0;
+   WRITE_REG(I2C3->ICR, (I2C_FLAG_ARLO | I2C_FLAG_BERR | I2C_FLAG_OVR | I2C_FLAG_PECERR));
+   CLEAR_BIT(I2C3->CR2, (I2C_CR2_HEAD10R | I2C_CR2_NBYTES | I2C_CR2_RELOAD | I2C_CR2_AUTOEND | I2C_CR2_RD_WRN));
+}
+
+void I2C3_EV_IRQHandler(void)
+{
+   // Determine which I2C3 event caused this interrupt
+   if (READ_BIT(I2C3->ISR, I2C_FLAG_TCR) && ai_data_count)
+   {
+      // Prepare the DMA to read the AI detection data
+      CLEAR_BIT(DMA2_Stream0->CR, DMA_SxCR_EN);
+      WRITE_REG(DMA2_Stream0->M0AR, (uint32_t)&ai_data);
+      WRITE_REG(DMA2_Stream0->NDTR, ((ai_data_count >= sizeof(ai_data)) ? sizeof(ai_data) : ai_data_count));
+      SET_BIT(DMA2_Stream0->CR, DMA_SxCR_EN);
+      ai_data_count = 0;
+
+      // Initiate the AI data read
+      MODIFY_REG(I2C3->CR2, (I2C_CR2_NBYTES | I2C_RELOAD_MODE | I2C_GENERATE_START_READ), (((DMA2_Stream0->NDTR << I2C_CR2_NBYTES_Pos) & I2C_CR2_NBYTES) | I2C_AUTOEND_MODE));
+   }
+   else  // Clear any NACK error flag
+      WRITE_REG(I2C3->ICR, I2C_FLAG_AF);
+}
+
+void DMA2_Stream0_IRQHandler(void)
+{
+   // Clear the interrupt register contents
+   WRITE_REG(i2c3_dma_int_registers->IFCR, i2c3_dma_int_registers->ISR);
+
+   // Set the new AI detections flag
+   if (!ai_data_count)
+      new_ai_detections = 1;
 }
 
 
@@ -70,6 +119,7 @@ void AI_Int_IRQHandler(void)
 void ai_comms_init(void)
 {
    // Initialize the various GPIO clocks
+   new_ai_detections = 0;
    SET_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOAEN);
    (void)READ_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOAEN);
    SET_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOBEN);
@@ -82,11 +132,14 @@ void ai_comms_init(void)
    (void)READ_BIT(RCC->AHB1ENR, RCC_AHB1ENR_DMA2EN);
 
    // Initialize the SPI2 peripheral clock
+   MODIFY_REG(RCC->D2CCIP1R, RCC_D2CCIP1R_SPI123SEL, (uint32_t)RCC_SPI123CLKSOURCE_CLKP);
    SET_BIT(RCC->APB1LENR, RCC_APB1LENR_SPI2EN);
    (void)READ_BIT(RCC->APB1LENR, RCC_APB1LENR_SPI2EN);
-   MODIFY_REG(RCC->D2CCIP1R, RCC_D2CCIP1R_SPI123SEL, (uint32_t)RCC_SPI123CLKSOURCE_CLKP);
 
-   // TODO: Initialize the I2C3 peripheral clock
+   // Initialize the I2C3 peripheral clock
+   MODIFY_REG(RCC->D2CCIP2R, RCC_D2CCIP2R_I2C123SEL, RCC_I2C3CLKSOURCE_D2PCLK1);
+   SET_BIT(RCC->APB1LENR, RCC_APB1LENR_I2C3EN);
+   (void)READ_BIT(RCC->APB1LENR, RCC_APB1LENR_I2C3EN);
 
    // Initialize the SYSCFG clock
    SET_BIT(RCC->APB4ENR, RCC_APB4ENR_SYSCFGEN);
@@ -177,28 +230,29 @@ void ai_comms_init(void)
    CLEAR_BIT(DMA2_Stream2->CR, (DMA_IT_TC | DMA_IT_TE | DMA_IT_DME | DMA_IT_HT));
 
    // Initialize DMA2 Stream0 for I2C3_RX
-   /*CLEAR_BIT(DMA2_Stream0->CR, DMA_SxCR_EN);
+   CLEAR_BIT(DMA2_Stream0->CR, DMA_SxCR_EN);
    while (READ_BIT(DMA2_Stream0->CR, DMA_SxCR_EN));
    MODIFY_REG(DMA2_Stream0->CR,
              (DMA_SxCR_MBURST | DMA_SxCR_PBURST | DMA_SxCR_PL | DMA_SxCR_MSIZE | DMA_SxCR_PSIZE | DMA_SxCR_MINC | DMA_SxCR_PINC | DMA_SxCR_CIRC | DMA_SxCR_DIR | DMA_SxCR_CT | DMA_SxCR_DBM),
-             (DMA_PERIPH_TO_MEMORY | DMA_MINC_ENABLE | DMA_PDATAALIGN_BYTE | DMA_MDATAALIGN_BYTE | DMA_PRIORITY_LOW | DMA_MBURST_SINGLE | DMA_PBURST_SINGLE | DMA_SxCR_TCIE | DMA_SxCR_TEIE));
+             (DMA_PERIPH_TO_MEMORY | DMA_MINC_ENABLE | DMA_PDATAALIGN_BYTE | DMA_MDATAALIGN_BYTE | DMA_PRIORITY_LOW | DMA_MBURST_SINGLE | DMA_PBURST_SINGLE));
    i2c3_dma_int_registers = (dma_int_registers_t*)((uint32_t)DMA2_Stream0 & (uint32_t)(~0x3FFU));
    WRITE_REG(DMAMUX1_Channel8->CCR, DMA_REQUEST_I2C3_RX);
    WRITE_REG(DMAMUX1_ChannelStatus->CFR, (1UL << (8 & 0x1FU)));
 
    // Configure the initial I2C3 DMA buffer addresses and sizes
-   WRITE_REG(DMA2_Stream0->CPAR, (uint32_t)&I2C3->RXDR);
-   WRITE_REG(DMA2_Stream0->CM0AR, (uint32_t)&ai_data_count);
-   WRITE_REG(DMA2_Stream0->CNDTR, sizeof(ai_data_count));
+   WRITE_REG(DMA2_Stream0->PAR, (uint32_t)&I2C3->RXDR);
+   WRITE_REG(DMA2_Stream0->M0AR, (uint32_t)&ai_data_count);
+   WRITE_REG(DMA2_Stream0->NDTR, sizeof(ai_data_count));
+   CLEAR_BIT(DMA2_Stream0->CR, (DMA_IT_TC | DMA_IT_TE));
 
-   // Set up the I2C3 peripheral (TODO: Fix this for slave mode)
+   // Set up the I2C3 peripheral
    WRITE_REG(I2C3->CR1, 0);
-   WRITE_REG(I2C3->TIMINGR, 0x00E2122E);
+   WRITE_REG(I2C3->TIMINGR, 0x00E2122E); // TODO: CHECK THIS
    CLEAR_BIT(I2C3->OAR1, I2C_OAR1_OA1EN);
    WRITE_REG(I2C3->OAR1, (I2C_OAR1_OA1EN | I2C_AI_DEVICE_ADDRESS));
    WRITE_REG(I2C3->OAR2, 0);
    MODIFY_REG(I2C3->CR2, (I2C_CR2_ADD10 | I2C_CR2_SADD), (uint32_t)I2C_AI_DEVICE_ADDRESS);
-   SET_BIT(I2C3->CR1, (I2C_CR1_ERRIE | I2C_CR1_TCIE | I2C_CR1_NACKIE | I2C_CR1_RXDMAEN | I2C_CR1_PE));*/
+   SET_BIT(I2C3->CR1, (I2C_CR1_ERRIE | I2C_CR1_TCIE | I2C_CR1_NACKIE | I2C_CR1_RXDMAEN | I2C_CR1_PE));
 
    // Enable the SPI2 and DMA2 Stream2 interrupts
    NVIC_SetPriority(DMA2_Stream2_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 0, 0));
@@ -209,7 +263,16 @@ void ai_comms_init(void)
 
 void ai_comms_start(void)
 {
-  ;
+   // Enable the I2C3 and DMA2 Stream0 interrupts
+   WRITE_REG(EXTI->C2PR1, FROM_AI_INT_Pin);
+   NVIC_SetPriority(DMA2_Stream0_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 0, 3));
+   NVIC_EnableIRQ(DMA2_Stream0_IRQn);
+   NVIC_SetPriority(I2C3_ER_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 0, 2));
+   NVIC_EnableIRQ(I2C3_ER_IRQn);
+   NVIC_SetPriority(I2C3_EV_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 0, 4));
+   NVIC_EnableIRQ(I2C3_EV_IRQn);
+   NVIC_SetPriority(I2C_FROM_AI_INT_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 0, 3));
+   NVIC_EnableIRQ(I2C_FROM_AI_INT_IRQn);
 }
 
 void ai_send(const uint8_t *data, uint16_t data_length)
@@ -228,11 +291,21 @@ void ai_send(const uint8_t *data, uint16_t data_length)
    SET_BIT(SPI2->CR1, SPI_CR1_CSTART);
 }
 
+void ai_process_detections(void)
+{
+   // Process any new AI event detections
+   if (new_ai_detections)
+   {
+      new_ai_detections = 0;
+   }
+}
+
 #else
 
 void ai_comms_init(void) {}
 void ai_comms_start(void) {}
 void ai_send(const uint8_t *data, uint16_t data_length) {}
+void ai_process_detections(void) {}
 
 #endif  // #if REV_ID != REV_A
 
