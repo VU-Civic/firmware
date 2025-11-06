@@ -1052,10 +1052,9 @@ void cell_init(void)
    }
 }
 
-uint8_t cell_update_state(void)
+void cell_update_state(void)
 {
    // Process any outstanding messages that were received since the last invocation
-   const uint8_t processing_occurred = configure_modem || connectivity_changed || device_info_update || pending_messages;
    if (configure_modem)
       cell_configure_modem();
    if (connectivity_changed)
@@ -1085,9 +1084,12 @@ uint8_t cell_update_state(void)
    }
    while (pending_messages)
       cell_process_network_message(cell_mqtt_read());
+}
 
-   // Return whether this function call actually processed anything
-   return processing_occurred;
+uint8_t cell_pending_events(void)
+{
+   // Return whether there are any pending events to be handled
+   return configure_modem || connectivity_changed || device_info_update || pending_messages;
 }
 
 void cell_update_device_details(void)

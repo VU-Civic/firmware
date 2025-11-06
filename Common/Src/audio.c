@@ -559,10 +559,15 @@ void audio_init(void)
    NVIC_EnableIRQ(MDMA_IRQn);
 }
 
-uint8_t audio_process_new_data(cell_audio_transmit_command_t transmit_evidence)
+uint8_t audio_new_data_available(void)
+{
+   // Return whether there is any new unprocessed data available
+   return new_audio_received;
+}
+
+void audio_process_new_data(cell_audio_transmit_command_t transmit_evidence)
 {
    // Only proceed if there is new unprocessed audio data
-   const uint8_t data_processed = new_audio_received;
    if (new_audio_received)
    {
       // Encode the audio data
@@ -585,9 +590,6 @@ uint8_t audio_process_new_data(cell_audio_transmit_command_t transmit_evidence)
          for (const opus_frame_t *frame = result_begin; frame != result_end; frame = frame->next)
             cell_transmit_audio(frame, (transmit_evidence == CELL_AUDIO_TRANSMIT_END) && (frame->next == result_end));
    }
-
-   // Return whether this function call actually processed anything
-   return data_processed;
 }
 
 #endif  // #ifdef CORE_CM7
