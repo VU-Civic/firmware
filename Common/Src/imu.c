@@ -1212,7 +1212,7 @@ typedef enum
 #define DMP_Motion_Event_Control_BAC_Wearable               0x8000
 
 // I2C Definitions
-#define I2C_IMU_DEVICE_ADDRESS      208
+#define I2C_IMU_DEVICE_ADDRESS        208
 #if REV_ID == REV_A
   #define I2C_IMU_INT_IRQn            EXTI15_10_IRQn
 #else
@@ -1451,8 +1451,13 @@ static void select_mem_bank(uint16_t reg)
 void imu_init(void)
 {
    // Initialize the various GPIO and BDMA clocks
+#if REV_ID == REV_A
    SET_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOFEN);
    (void)READ_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOFEN);
+#else
+   SET_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOBEN);
+   (void)READ_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOBEN);
+#endif
    SET_BIT(RCC->AHB4ENR, RCC_AHB4ENR_BDMAEN);
    (void)READ_BIT(RCC->AHB4ENR, RCC_AHB4ENR_BDMAEN);
 
