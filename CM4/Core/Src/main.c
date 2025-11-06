@@ -64,16 +64,17 @@ int main(void)
    cpu_init();
 
    // Loop forever
-   uint8_t processing_occurred;
    while (1)
    {
       // Carry out slow processing operations
-      processing_occurred = audio_process_new_data(CELL_AUDIO_NO_TRANSMIT); // TODO: Call with correct parameter
-      processing_occurred = cell_update_state() || processing_occurred;
+      audio_process_new_data(CELL_AUDIO_NO_TRANSMIT); // TODO: Call with correct parameter
+      cell_update_state();
 
-      // Put the CPU to sleep if no processing occurred
-      if (!processing_occurred)
+      // Put the CPU to sleep if nothing left to process
+      __disable_irq();
+      if (!audio_new_data_available() && !cell_pending_events())
          cpu_sleep();
+      __enable_irq();
    }
    return 0;
 }
