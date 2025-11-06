@@ -7,7 +7,8 @@
 
 // Opus Encoder Type Definitions ---------------------------------------------------------------------------------------
 
-#define OPUS_FRAME_SIZE ((AUDIO_SAMPLE_RATE_HZ / 1000) * OPUS_MS_PER_FRAME)
+#define OPUS_FRAME_SIZE                      ((AUDIO_SAMPLE_RATE_HZ / 1000) * OPUS_MS_PER_FRAME)
+#define OPUS_NUM_HISTORICAL_FRAMES           (OPUS_HISTORY_MS / OPUS_MS_PER_FRAME)
 
 
 // Static Opus Encoding Variables --------------------------------------------------------------------------------------

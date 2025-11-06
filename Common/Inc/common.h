@@ -45,7 +45,6 @@
 #define OPUS_COMPLEXITY                      0
 #define OPUS_MS_PER_FRAME                    60
 #define OPUS_HISTORY_MS                      960
-#define OPUS_NUM_HISTORICAL_FRAMES           (OPUS_HISTORY_MS / OPUS_MS_PER_FRAME)
 
 #define MIN_MS_BETWEEN_ONSETS                20
 #define MAX_NUM_ONSETS                       (2 + (1000 / MIN_MS_BETWEEN_ONSETS))

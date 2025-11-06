@@ -221,5 +221,7 @@ void cpu_init(void)
 void cpu_sleep(void)
 {
    // Put the CPU to sleep until awoken by an interrupt
+   __DSB();
    __WFI();
+   __ISB();
 }
