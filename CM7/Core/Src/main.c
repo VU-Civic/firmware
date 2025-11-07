@@ -181,6 +181,7 @@ int main(void)
    while (__HAL_RCC_GET_FLAG(RCC_FLAG_D2CKRDY) == RESET);
 
    // Initialize user peripherals and algorithms
+   chip_initialize_unused_pins();
    onset_detection_init();
    audio_init();
    audio_start();

@@ -196,6 +196,52 @@ void chip_save_non_volatile(const non_volatile_data_t *nvm_data)
    SET_BIT(FLASH->CR2, FLASH_CR_LOCK);
 }
 
+void chip_initialize_unused_pins(void)
+{
+#ifdef CORE_CM7
+
+   // Enable all GPIO clocks
+   SET_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOAEN);
+   (void)READ_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOAEN);
+   SET_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOBEN);
+   (void)READ_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOBEN);
+   SET_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOCEN);
+   (void)READ_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOCEN);
+   SET_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIODEN);
+   (void)READ_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIODEN);
+   SET_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOEEN);
+   (void)READ_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOEEN);
+   SET_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOFEN);
+   (void)READ_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOFEN);
+   SET_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOGEN);
+   (void)READ_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOGEN);
+   SET_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOHEN);
+   (void)READ_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOHEN);
+
+   // Set all unused pins an analog inputs with pull-down enabled
+   const gpio_pin_t unused_pins[] = UNUSED_PINS;
+   for (uint32_t i = 0; i < (sizeof(unused_pins) / sizeof(unused_pins[0])); ++i)
+   {
+      uint32_t position = 32 - __builtin_clz(unused_pins[i].pin) - 1;
+      MODIFY_REG(unused_pins[i].port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_LOW << (position * 2U)));
+      MODIFY_REG(unused_pins[i].port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_ANALOG & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
+      MODIFY_REG(unused_pins[i].port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)), (GPIO_PULLDOWN << (position * 2U)));
+      MODIFY_REG(unused_pins[i].port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_ANALOG & GPIO_MODE) << (position * 2U)));
+   }
+
+   // Disable all GPIO clocks
+   CLEAR_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOAEN);
+   CLEAR_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOBEN);
+   CLEAR_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOCEN);
+   CLEAR_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIODEN);
+   CLEAR_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOEEN);
+   CLEAR_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOFEN);
+   CLEAR_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOGEN);
+   CLEAR_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOHEN);
+
+#endif
+}
+
 void cpu_init(void)
 {
 #ifdef CORE_CM7
