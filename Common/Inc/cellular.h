@@ -12,7 +12,7 @@ uint8_t cell_pending_events(void);
 void cell_update_device_details(void);
 void cell_transmit_alert(alert_message_t *alert);
 void cell_transmit_audio(const opus_frame_t *restrict audio_frame, uint8_t is_final_frame);
-uint8_t cell_is_busy(void); // TODO: USE THIS IN USB ISR TO DETERMINE WHETHER DATA SHOULD BE BUFFERED
+uint8_t cell_is_busy(void);
 
 #endif  // #ifdef CORE_CM4
 

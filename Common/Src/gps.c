@@ -17,7 +17,7 @@
 #define UBX_MSG_LEN_OFFSET             4
 #define UBX_MSG_PAYLOAD_OFFSET         6
 
-#define UBX_MAX_PAYLOAD_SIZE           255
+#define UBX_MAX_PAYLOAD_SIZE           400
 #define UBX_MSG_CHKSUM_LEN             2
 #define UBX_PACKET_OVERHEAD            (UBX_MSG_PAYLOAD_OFFSET + UBX_MSG_CHKSUM_LEN)
 #define UBX_MAX_PACKET_SIZE            (UBX_MAX_PAYLOAD_SIZE + UBX_PACKET_OVERHEAD)
@@ -27,6 +27,8 @@
 #define UBX_SYNC                       UBX_SYNC1_CHAR, UBX_SYNC2_CHAR
 #define UBX_MSG_LEN_PLACEHOLDER        0x00, 0x00
 #define UBX_MSG_CKSUM_PLACEHOLDER      0x00, 0x00
+
+#define UBX_NAV_SIG_MSG                0x01, 0x43
 
 #define UBX_CFG_RESET                  0x06, 0x04
 #define UBX_CFG_RESET_DATA             0x00, 0x00, 0x01, 0x00
@@ -77,7 +79,7 @@
 #define LNA_GAIN_LOW                   0x01
 #define LNA_GAIN_BYPASS                0x02
 #define CFG_HW_RF_LNA_MODE             0x57, 0x00, 0xA3, 0x20
-#define HW_RF_LNA_MODE                 LNA_GAIN_NORMAL  // TODO: IN HW, CONNECT V_BCKP SO THAT BBR DOESN'T GET ERASED DURING HW RESET
+#define HW_RF_LNA_MODE                 LNA_GAIN_NORMAL  // TODO: CHECK IF CHANGING THIS HELPS (AFTER V_BCKP IS CONNECTED SO THAT BBR DOESN'T GET ERASED DURING HW RESET)
 
 #define UBX_GET_INTERFACE_CFG_DATA     CFG_I2C_ENABLED, CFG_SPI_ENABLED, CFG_UART1INPROT_UBX, CFG_UART1OUTPROT_UBX, CFG_UART1INPROT_NMEA, CFG_UART1OUTPROT_NMEA
 #define UBX_SET_INTERFACE_CFG_DATA     CFG_I2C_ENABLED, 0x00, CFG_SPI_ENABLED, 0x00, CFG_UART1INPROT_UBX, 0x01, CFG_UART1OUTPROT_UBX, 0x01, CFG_UART1INPROT_NMEA, 0x00, CFG_UART1OUTPROT_NMEA, 0x00
@@ -89,7 +91,7 @@
 #define UBX_SET_MSG_CFG_DATA           CFG_MSGOUT_UBX_NAV_PVT_UART1, 0x01, CFG_MSGOUT_UBX_TIM_TM2_UART1, 0x01
 
 #define UBX_GET_GEN_CFG_DATA           CFG_NAVSPG_DYNMODEL, CFG_NAVSPG_FIXMODE, CFG_NAVSPG_INIFIX3D, CFG_NAVSPG_UTCSTANDARD, CFG_SBAS_USE_RANGING, CFG_SBAS_USE_DIFFCORR, CFG_SBAS_USE_INTEGRITY, CFG_TP_TP1_ENA, CFG_TP_TIMEGRID_TP1, CFG_RATE_MEAS, CFG_RATE_NAV, CFG_RATE_TIMEREF
-#define UBX_SET_GEN_CFG_DATA           CFG_NAVSPG_DYNMODEL, 0x02, CFG_NAVSPG_FIXMODE, 0x03, CFG_NAVSPG_INIFIX3D, 0x01, CFG_NAVSPG_UTCSTANDARD, 0x03, CFG_SBAS_USE_RANGING, 0x00, CFG_SBAS_USE_DIFFCORR, 0x01, CFG_SBAS_USE_INTEGRITY, 0x00, CFG_TP_TP1_ENA, 0x00, CFG_TP_TIMEGRID_TP1, 0x01, CFG_RATE_MEAS, 0xF4, 0x01, CFG_RATE_NAV, 0x02, 0x00, CFG_RATE_TIMEREF, 0x01
+#define UBX_SET_GEN_CFG_DATA           CFG_NAVSPG_DYNMODEL, 0x02, CFG_NAVSPG_FIXMODE, 0x03, CFG_NAVSPG_INIFIX3D, 0x01, CFG_NAVSPG_UTCSTANDARD, 0x03, CFG_SBAS_USE_RANGING, 0x00, CFG_SBAS_USE_DIFFCORR, 0x01, CFG_SBAS_USE_INTEGRITY, 0x00, CFG_TP_TP1_ENA, 0x01, CFG_TP_TIMEGRID_TP1, 0x00, CFG_RATE_MEAS, 0xF4, 0x01, CFG_RATE_NAV, 0x02, 0x00, CFG_RATE_TIMEREF, 0x00
 
 #define UBX_GET_LNA_DATA               CFG_HW_RF_LNA_MODE
 #define UBX_SET_LNA_DATA               CFG_HW_RF_LNA_MODE, HW_RF_LNA_MODE
@@ -122,6 +124,7 @@ typedef enum
    UBX_NAV_PVT,
    UBX_TIM_TM2,
    UBX_CFG_VALGET,
+   UBX_NAV_SIG,
    UBX_ACK_ACK
 } ubx_message_type_t;
 
@@ -138,14 +141,14 @@ typedef enum
    GPS_BAUD_921600 = 921600,
 } gps_baud_t;
 
-typedef struct __attribute__((packed))
+typedef struct __attribute__ ((packed))
 {
    uint32_t iTOW;
    uint16_t year;
    uint8_t month, day, hour, min, sec;
    union {
       uint8_t valid;
-      struct __attribute__((packed)) {
+      struct __attribute__ ((packed)) {
          uint8_t validDate: 1;
          uint8_t validTime: 1;
          uint8_t fullyResolved: 1;
@@ -157,7 +160,7 @@ typedef struct __attribute__((packed))
    uint8_t fixType;
    union {
       uint8_t flags;
-      struct __attribute__((packed)) {
+      struct __attribute__ ((packed)) {
          uint8_t gnssFixOK: 1;
          uint8_t diffSoln: 1;
          uint8_t psmState: 3;
@@ -167,7 +170,7 @@ typedef struct __attribute__((packed))
    };
    union {
       uint8_t flags2;
-      struct __attribute__((packed)) {
+      struct __attribute__ ((packed)) {
          uint8_t confirmedAvai: 1;
          uint8_t confirmedDate: 1;
          uint8_t confirmedTime: 1;
@@ -181,7 +184,7 @@ typedef struct __attribute__((packed))
    uint16_t pDOP;
    union {
       uint16_t flags3;
-      struct __attribute__((packed)) {
+      struct __attribute__ ((packed)) {
          uint8_t invalidLlh: 1;
          uint8_t lastCorrectionAge: 4;
          uint8_t unused: 8;
@@ -194,12 +197,12 @@ typedef struct __attribute__((packed))
    uint16_t magAcc;
 } ubx_nav_pvt_t;
 
-typedef struct __attribute__((packed))
+typedef struct __attribute__ ((packed))
 {
    uint8_t ch;
    union {
       uint8_t flags;
-      struct __attribute__((packed)) {
+      struct __attribute__ ((packed)) {
          uint8_t mode: 1;
          uint8_t run: 1;
          uint8_t newFallingEdge: 1;
@@ -213,6 +216,35 @@ typedef struct __attribute__((packed))
    uint32_t towMsR, towSubMsR, towMsF, towSubMsF;
    int32_t accEst;
 } ubx_tim_tm2_t;
+
+typedef struct __attribute__ ((packed))
+{
+   uint8_t gnssId, svId, sigId, freqId;
+   int16_t prRes;
+   uint8_t cno, qualityInd, corrSource, ionoModel;
+   union {
+      uint16_t flags;
+      struct __attribute__ ((packed)) {
+         uint8_t health: 2;
+         uint8_t prSmoothed: 1;
+         uint8_t prUsed: 1;
+         uint8_t crUsed: 1;
+         uint8_t doUsed: 1;
+         uint8_t prCorrUsed: 1;
+         uint8_t crCorrUsed: 1;
+         uint8_t doCorrUsed: 1;
+         uint8_t authStatus: 1;
+      };
+   };
+   uint8_t reserved1[4];
+} ubx_nav_sig_data_t;
+
+typedef struct __attribute__ ((packed))
+{
+   uint32_t iTOW;
+   uint8_t version, numSigs, reserved0[2];
+   ubx_nav_sig_data_t data[1];
+} ubx_nav_sig_t;
 
 
 // GPS Static Variables ------------------------------------------------------------------------------------------------
@@ -231,7 +263,7 @@ typedef struct __attribute__((packed))
 #define GPS_RX_BUFFER_SIZE_HALF        (2 * UBX_MAX_PACKET_SIZE)
 #define GPS_RX_BUFFER_SIZE_FULL        (2 * GPS_RX_BUFFER_SIZE_HALF)
 
-__attribute__((aligned (4)))
+__attribute__ ((aligned (4)))
 static uint8_t gps_rx_buffer[GPS_RX_BUFFER_SIZE_FULL];
 
 static volatile float lat_degrees = -1000.0f, lon_degrees = -1000.0f, height_meters = -1000.0f;
@@ -243,7 +275,7 @@ static volatile double next_timestamp = 0.0;
 
 inline static double tm2_to_gps_timestamp(uint16_t week_number, uint32_t tow_ms, uint32_t tow_sub_ms)
 {
-   return ((double)week_number * 604800.0) + ((double)tow_ms * 0.001) + ((double)tow_sub_ms * 0.000000001);
+   return 315964800.0 + ((double)week_number * 604800.0) + ((double)tow_ms * 0.001) + ((double)tow_sub_ms * 0.000000001);
 }
 
 inline static void gps_set_led_status(uint8_t on)
@@ -309,7 +341,7 @@ static ubx_message_type_t gps_process_message(const uint8_t* msg, uint16_t max_m
    else if ((msg[UBX_MSG_CLASS_OFFSET] == 0x0D) && (msg[UBX_MSG_ID_OFFSET] == 0x03) && (msg_len == sizeof(ubx_tim_tm2_t)))
    {
       const ubx_tim_tm2_t *message = (const ubx_tim_tm2_t*)(msg + UBX_MSG_PAYLOAD_OFFSET);
-      if (message->time && message->newRisingEdge && (message->towMsR <= 604800000)) // TODO: CAN WE ALSO VALIDATE ON WEEK NUMBER (IS MAX 1023 OR DOES THE RECEIVER CALCULATE CORRECT WEEK, CURRENTLY ~2367)
+      if (message->time && message->newRisingEdge && (message->towMsR <= 604800000))
          next_timestamp = tm2_to_gps_timestamp(message->wnR, message->towMsR, message->towSubMsR);
       return UBX_TIM_TM2;
    }
@@ -528,8 +560,8 @@ static uint8_t gps_verify_or_set_configuration(void)
    // Ensure that the GPS configuration parameters are set as expected
    // CFG-NAVSPG-DYNMODEL=2 (Stationary), CFG-NAVSPG-FIXMODE=3 (Auto 2D/3D), CFG-NAVSPG-INIFIX3D=1 (True)
    // CFG-NAVSPG-UTCSTANDARD=3 (USNO, derived from GPS time), CFG-SBAS-USE_RANGING=0, CFG-SBAS-USE_DIFFCORR=1
-   // CFG-SBAS-USE_INTEGRITY=0, CFG-TP-TP1_ENA=0 (Timepulse disabled), CFG-TP-TIMEGRID_TP1=1 (GPS time reference for timepulse)
-   // CFG-RATE-MEAS=500 (2Hz), CFG-RATE-NAV=2 (1Hz), CFG-RATE-TIMEREF=1 (align measurements to GPS time)
+   // CFG-SBAS-USE_INTEGRITY=0, CFG-TP-TP1_ENA=1 (Timepulse enabled), CFG-TP-TIMEGRID_TP1=0 (UTC time reference for timepulse)
+   // CFG-RATE-MEAS=500 (2Hz), CFG-RATE-NAV=2 (1Hz), CFG-RATE-TIMEREF=0 (align measurements to UTC time)
    uint8_t ubx_general_cfg_get[] = { UBX_SYNC, UBX_CFG_VALGET_MSG, UBX_MSG_LEN_PLACEHOLDER, UBX_CFG_VALGET_BEGIN, UBX_GET_GEN_CFG_DATA, UBX_MSG_CKSUM_PLACEHOLDER };
    uint8_t ubx_general_cfg_expected[] = { UBX_SYNC, UBX_CFG_VALGET_MSG, UBX_MSG_LEN_PLACEHOLDER, UBX_CFG_VALGET_RESPONSE, UBX_SET_GEN_CFG_DATA, UBX_MSG_CKSUM_PLACEHOLDER };
    calculate_length_and_checksum(ubx_general_cfg_get, sizeof(ubx_general_cfg_get));
@@ -542,16 +574,6 @@ static uint8_t gps_verify_or_set_configuration(void)
       gps_send_and_receive(UBX_ACK_ACK, ubx_general_cfg_set, sizeof(ubx_general_cfg_set));
       configuration_changed = 1;
    }
-//#define UBX_SET_NEW_DATA      CFG_NAVSPG_DYNMODEL, 0x02, CFG_NAVSPG_FIXMODE, 0x03, CFG_NAVSPG_INIFIX3D, 0x01, CFG_NAVSPG_UTCSTANDARD, 0x03, CFG_SBAS_USE_RANGING, 0x00, CFG_SBAS_USE_DIFFCORR, 0x01, CFG_SBAS_USE_INTEGRITY, 0x00, CFG_TP_TP1_ENA, 0x00, CFG_TP_TIMEGRID_TP1, 0x01, CFG_RATE_MEAS, 0xF4, 0x01, CFG_RATE_NAV, 0x02, 0x00, CFG_RATE_TIMEREF, 0x01
-/*#define UBX_SET_NEW_DATA      CFG_RATE_MEAS, 0xF4, 0x01, CFG_RATE_NAV, 0x02, 0x00, CFG_RATE_TIMEREF, 0x01
-   uint8_t ubx_general_cfg_set[] = { UBX_SYNC, UBX_CFG_VALSET_MSG, UBX_MSG_LEN_PLACEHOLDER, UBX_CFG_VALSET_BEGIN, UBX_SET_NEW_DATA, UBX_MSG_CKSUM_PLACEHOLDER };
-   calculate_length_and_checksum(ubx_general_cfg_set, sizeof(ubx_general_cfg_set));
-   gps_send_and_receive(UBX_ACK_ACK, ubx_general_cfg_set, sizeof(ubx_general_cfg_set));*/
-
-
-
-
-
    return configuration_changed;
 }
 
@@ -571,6 +593,14 @@ static uint8_t gps_verify_or_set_lna_gain(void)
       HAL_Delay(500);
    }
    return configuration_changed;
+}
+
+static void gps_poll_signal_data(void)
+{
+   // Send a request for data related to the currently visible satellite constellation
+   uint8_t ubx_poll_nav_sig_msg[] = { UBX_SYNC, UBX_NAV_SIG_MSG, UBX_MSG_LEN_PLACEHOLDER, UBX_MSG_CKSUM_PLACEHOLDER };
+   calculate_length_and_checksum(ubx_poll_nav_sig_msg, sizeof(ubx_poll_nav_sig_msg));
+   gps_send_and_receive(UBX_NAV_SIG, ubx_poll_nav_sig_msg, sizeof(ubx_poll_nav_sig_msg));
 }
 
 
@@ -681,13 +711,13 @@ void gps_init(void)
 
    // Initialize the GPS UART GPIO pins
    position = 32 - __builtin_clz(GPS_TX_Pin) - 1;
-   MODIFY_REG(GPS_TX_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_HIGH << (position * 2U)));
+   MODIFY_REG(GPS_TX_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_MEDIUM << (position * 2U)));
    MODIFY_REG(GPS_TX_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_AF_PP & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
    CLEAR_BIT(GPS_TX_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
    MODIFY_REG(GPS_TX_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (GPS_UART_AF << ((position & 0x07U) * 4U)));
    MODIFY_REG(GPS_TX_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_AF_PP & GPIO_MODE) << (position * 2U)));
    position = 32 - __builtin_clz(GPS_RX_Pin) - 1;
-   MODIFY_REG(GPS_RX_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_HIGH << (position * 2U)));
+   MODIFY_REG(GPS_RX_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_MEDIUM << (position * 2U)));
    MODIFY_REG(GPS_RX_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_AF_PP & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
    CLEAR_BIT(GPS_RX_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
    MODIFY_REG(GPS_RX_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (GPS_UART_AF << ((position & 0x07U) * 4U)));
@@ -736,8 +766,10 @@ void gps_init(void)
      config_changed = gps_verify_or_set_gnss_config() || config_changed;
      config_changed = gps_verify_or_set_configuration() || config_changed;
      config_changed = gps_verify_or_set_lna_gain() || config_changed;
+#if REV_ID > REV_B
      if (config_changed)
        gps_reset();
+#endif
    }
 
    // Start listening for packets using DMA until an idle line is detected
@@ -755,19 +787,27 @@ uint8_t gps_get_timepulse_fired(void)
    return fired;
 }
 
-void gps_update_packet_timestamp(void)
+void gps_update_packet_timestamp(uint8_t interpolate)
 {
-   // Update the most recently received GPS timestamp
-   data.timestamp = next_timestamp;
-   next_timestamp = 0.0;
+   // Either interpolate the timestamp of the GPS packet or update it from the time-mark packet
+   if (interpolate)
+   {
+      const double interpolated_timestamp = data.packets[0].timestamp + (1.0 / AUDIO_NUM_DMAS_PER_CLIP);
+      data.packets[0].timestamp = data.packets[1].timestamp = interpolated_timestamp;
+   }
+   else
+   {
+      data.packets[0].timestamp = data.packets[1].timestamp = 1.0 + next_timestamp;
+      next_timestamp = 0.0;
+   }
 }
 
 void gps_update_packet_llh(void)
 {
    // Update the most recently received GPS position
-   data.lat = lat_degrees;
-   data.lon = lon_degrees;
-   data.ht = height_meters;
+   data.packets[0].lat = data.packets[1].lat = lat_degrees;
+   data.packets[0].lon = data.packets[1].lon = lon_degrees;
+   data.packets[0].ht = data.packets[1].ht = height_meters;
 }
 
 #endif  // #ifdef CORE_CM4

@@ -144,7 +144,7 @@ typedef enum
 #define CELL_RX_BUFFER_SIZE_HALF       (2 * CELL_MAX_RX_PACKET_SIZE)
 #define CELL_RX_BUFFER_SIZE_FULL       (2 * CELL_RX_BUFFER_SIZE_HALF)
 
-__attribute__((aligned (4)))
+__attribute__ ((aligned (4)))
 static char cell_rx_buffer[CELL_RX_BUFFER_SIZE_FULL];
 
 static dma_int_registers_t *dma_int_registers;
@@ -896,25 +896,25 @@ void cell_init(void)
 
    // Initialize the CELL UART GPIO pins
    position = 32 - __builtin_clz(CELL_RTS_Pin) - 1;
-   MODIFY_REG(CELL_RTS_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_HIGH << (position * 2U)));
+   MODIFY_REG(CELL_RTS_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_MEDIUM << (position * 2U)));
    MODIFY_REG(CELL_RTS_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_AF_PP & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
    CLEAR_BIT(CELL_RTS_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
    MODIFY_REG(CELL_RTS_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (CELL_UART_AF << ((position & 0x07U) * 4U)));
    MODIFY_REG(CELL_RTS_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_AF_PP & GPIO_MODE) << (position * 2U)));
    position = 32 - __builtin_clz(CELL_CTS_Pin) - 1;
-   MODIFY_REG(CELL_CTS_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_HIGH << (position * 2U)));
+   MODIFY_REG(CELL_CTS_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_MEDIUM << (position * 2U)));
    MODIFY_REG(CELL_CTS_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_AF_PP & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
    CLEAR_BIT(CELL_CTS_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
    MODIFY_REG(CELL_CTS_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (CELL_UART_AF << ((position & 0x07U) * 4U)));
    MODIFY_REG(CELL_CTS_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_AF_PP & GPIO_MODE) << (position * 2U)));
    position = 32 - __builtin_clz(CELL_TX_Pin) - 1;
-   MODIFY_REG(CELL_TX_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_HIGH << (position * 2U)));
+   MODIFY_REG(CELL_TX_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_MEDIUM << (position * 2U)));
    MODIFY_REG(CELL_TX_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_AF_PP & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
    CLEAR_BIT(CELL_TX_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
    MODIFY_REG(CELL_TX_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (CELL_UART_AF << ((position & 0x07U) * 4U)));
    MODIFY_REG(CELL_TX_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_AF_PP & GPIO_MODE) << (position * 2U)));
    position = 32 - __builtin_clz(CELL_RX_Pin) - 1;
-   MODIFY_REG(CELL_RX_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_HIGH << (position * 2U)));
+   MODIFY_REG(CELL_RX_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_MEDIUM << (position * 2U)));
    MODIFY_REG(CELL_RX_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_AF_PP & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
    CLEAR_BIT(CELL_RX_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
    MODIFY_REG(CELL_RX_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (CELL_UART_AF << ((position & 0x07U) * 4U)));
@@ -1097,9 +1097,9 @@ void cell_update_device_details(void)
    // Update the device info packet with the most current details if not busy
    if (!cell_busy)
    {
-      device_info.timestamp = data.timestamp;
-      device_info.lat = data.lat; device_info.lon = data.lon; device_info.ht = data.ht;
-      device_info.q1 = data.q1; device_info.q2 = data.q2; device_info.q3 = data.q3;
+      device_info.timestamp = data.packets[0].timestamp;
+      device_info.lat = data.packets[0].lat; device_info.lon = data.packets[0].lon; device_info.ht = data.packets[0].ht;
+      device_info.q1 = data.packets[0].q1; device_info.q2 = data.packets[0].q2; device_info.q3 = data.packets[0].q3;
       device_info.chip_temperature_alert = temperature_alert;
       device_info.signal_power = signal_power;
       device_info.signal_quality = signal_quality;

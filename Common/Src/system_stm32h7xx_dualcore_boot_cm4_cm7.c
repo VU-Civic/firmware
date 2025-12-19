@@ -14,7 +14,6 @@
 #endif
 
 
-// TODO: Remap ISR vector into SRAM on CM4 for faster runtime?
 /************************* Miscellaneous Configuration ************************/
 /* Note: Following vector table addresses must be defined in line with linker
          configuration. */
@@ -71,7 +70,6 @@ extern const unsigned char _eitcmram;
 extern const unsigned char _itcm_data;
 
 // System initialization function called automatically by assembly code before entering main()
-// TODO: CAN I MOVE main() sys init functionality here and not have to redo it?
 void SystemInit(void)
 {
    // FPU settings

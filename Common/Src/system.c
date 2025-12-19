@@ -8,17 +8,17 @@
 
 // Shared Application Variables for Both Cores -------------------------------------------------------------------------
 
-__attribute__((section (".user_nvm")))
+__attribute__ ((section (".user_nvm")))
 non_volatile_data_t non_volatile_data;
 
-__attribute__((section (".data_packet")))
-volatile data_packet_t data;
+__attribute__ ((section (".data_packet")))
+volatile data_packet_container_t data;
 
 
 // Shared Application Variables for Core CM4 ---------------------------------------------------------------------------
 
 #ifdef CORE_CM4
-volatile device_info_t device_info;
+volatile device_info_t device_info = { .firmware_date = FIRMWARE_BUILD_TIMESTAMP };
 #endif
 
 
@@ -26,8 +26,8 @@ volatile device_info_t device_info;
 
 static uint8_t *__sbrk_heap_end = NULL;
 
-extern int __io_putchar(int ch) __attribute__((weak));
-extern int __io_getchar(void) __attribute__((weak));
+extern int __io_putchar(int ch) __attribute__ ((weak));
+extern int __io_getchar(void) __attribute__ ((weak));
 
 char *__env[1] = { 0 };
 char **environ = __env;
@@ -36,8 +36,8 @@ void initialise_monitor_handles() {}
 int _getpid(void) { return 1; }
 int _kill(int pid, int sig) { errno = EINVAL; return -1; }
 void _exit (int status) { _kill(status, -1); while(1); }
-__attribute__((weak)) int _read(int file, char *ptr, int len) { for (int idx = 0; idx < len; ++idx) *ptr++ = __io_getchar(); return len; }
-__attribute__((weak)) int _write(int file, char *ptr, int len) { for (int idx = 0; idx < len; ++idx) __io_putchar(*ptr++); return len; }
+__attribute__ ((weak)) int _read(int file, char *ptr, int len) { for (int idx = 0; idx < len; ++idx) *ptr++ = __io_getchar(); return len; }
+__attribute__ ((weak)) int _write(int file, char *ptr, int len) { for (int idx = 0; idx < len; ++idx) __io_putchar(*ptr++); return len; }
 int _close(int file) { return -1; }
 int _fstat(int file, struct stat *st) { st->st_mode = S_IFCHR; return 0; }
 int _isatty(int file) { return 1; }
@@ -79,7 +79,6 @@ void *_sbrk(ptrdiff_t incr)
 
 
 // ARM Cortex Processor Interrupt and Exception Handlers ---------------------------------------------------------------
-// TODO: Should probably reboot if any of these occur (or alternately use a watchdog to auto-restart)
 
 void NMI_Handler(void) { while(1); }
 void HardFault_Handler(void) { while (1); }
@@ -90,26 +89,6 @@ void SVC_Handler(void) {}
 void DebugMon_Handler(void) {}
 void PendSV_Handler(void) {}
 void SysTick_Handler(void) { HAL_IncTick(); }
-
-
-// Shared Peripheral Interrupt Handlers --------------------------------------------------------------------------------
-
-#ifdef CORE_CM4
-#if REV_ID != REV_A
-
-void IMU_Int_IRQHandler(void);
-void AI_Int_IRQHandler(void);
-
-void EXTI9_5_IRQHandler(void)
-{
-   if (READ_BIT(EXTI->C2PR1, IMU_INT_Pin))
-      IMU_Int_IRQHandler();
-   if (READ_BIT(EXTI->C2PR1, FROM_AI_INT_Pin))
-      AI_Int_IRQHandler();
-}
-
-#endif
-#endif
 
 
 // Public API Functions ------------------------------------------------------------------------------------------------
@@ -256,10 +235,28 @@ void cpu_init(void)
    // Disable SysTick interrupts
    CLEAR_BIT(SysTick->CTRL, SysTick_CTRL_TICKINT_Msk);
 
+   // Enable an independent watchdog that resets if not fed within 1 second
+   SET_BIT(DBGMCU->APB4FZ1, DBGMCU_APB4FZ1_DBG_IWDG1);
+   WRITE_REG(IWDG1->KR, IWDG_KEY_ENABLE);
+   WRITE_REG(IWDG1->KR, IWDG_KEY_WRITE_ACCESS_ENABLE);
+   WRITE_REG(IWDG1->PR, IWDG_PRESCALER_32);
+   WRITE_REG(IWDG1->RLR, 1000);
+   while (READ_BIT(IWDG1->SR, (IWDG_SR_WVU | IWDG_SR_RVU | IWDG_SR_PVU)));
+   WRITE_REG(IWDG1->KR, IWDG_KEY_RELOAD);
+
 #else
 
    // Disable SysTick interrupts
    CLEAR_BIT(SysTick->CTRL, SysTick_CTRL_TICKINT_Msk);
+
+   // Enable an independent watchdog that resets if not fed within 1 second
+   SET_BIT(DBGMCU->APB4FZ2, DBGMCU_APB4FZ2_DBG_IWDG2);
+   WRITE_REG(IWDG2->KR, IWDG_KEY_ENABLE);
+   WRITE_REG(IWDG2->KR, IWDG_KEY_WRITE_ACCESS_ENABLE);
+   WRITE_REG(IWDG2->PR, IWDG_PRESCALER_32);
+   WRITE_REG(IWDG2->RLR, 1000);
+   while (READ_BIT(IWDG2->SR, (IWDG_SR_WVU | IWDG_SR_RVU | IWDG_SR_PVU)));
+   WRITE_REG(IWDG2->KR, IWDG_KEY_RELOAD);
 
 #endif
 }
@@ -270,4 +267,14 @@ void cpu_sleep(void)
    __DSB();
    __WFI();
    __ISB();
+}
+
+void cpu_feed_watchdog(void)
+{
+   // Reset the independent watchdog timer
+#ifdef CORE_CM7
+   WRITE_REG(IWDG1->KR, IWDG_KEY_RELOAD);
+#else
+   WRITE_REG(IWDG2->KR, IWDG_KEY_RELOAD);
+#endif
 }

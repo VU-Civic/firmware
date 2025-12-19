@@ -676,7 +676,6 @@ static int8_t CDC_Control(uint8_t cmd, uint8_t *pbuf, uint16_t length)
 static int8_t CDC_Receive(uint8_t *pbuf, uint32_t *len)
 {
    // Prepare to receive a USB packet
-   // TODO: Can we get rid of setting the Rx buffer here, just use one global one?
    USBD_CDC_SetRxBuffer(&usb_cdc_device, pbuf);
    USBD_CDC_ReceivePacket(&usb_cdc_device);
    return USBD_OK;

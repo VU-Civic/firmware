@@ -12,6 +12,8 @@
 
 // Custom Application Definitions --------------------------------------------------------------------------------------
 
+#define FIRMWARE_BUILD_TIMESTAMP             _DATETIME
+
 #define AUDIO_NUM_CHANNELS                   4
 #define AUDIO_SAMPLE_RATE_HZ                 48000
 #define AUDIO_BUFFER_SAMPLES                 32000
@@ -49,6 +51,8 @@
 #define MIN_MS_BETWEEN_ONSETS                20
 #define MAX_NUM_ONSETS                       (2 + (1000 / MIN_MS_BETWEEN_ONSETS))
 
+#define AI_NUM_CLASSES                       2
+
 #define MAX_NUM_EVENTS_PER_ALERT             AUDIO_NUM_DMAS_PER_CLIP
 
 #ifdef PACKET_FULL_AUDIO
@@ -57,12 +61,17 @@
 #define PACKET_AUDIO_SAMPLES                 AUDIO_BUFFER_SAMPLES_PER_CHANNEL
 #endif
 
+#define PACKET_START_DELIMITER               { 0xAE, 0xA0, 0xA2, 0xF5 }
 #define PACKET_END_DELIMITER                 { 0xFE, 0xF0, 0xF2, 0x25 }
 #define PACKET_RESPONSE_DELIMITER            { 0xFE, 0xF9 }
 #define PACKET_RESPONSE_ACK                  { 0x01, 0x02 }
 
-#define MIN(a, b)                            (((a) < (b)) ? (a) : (b))
-#define MAX(a, b)                            (((a) > (b)) ? (a) : (b))
+#ifndef MIN
+  #define MIN(a, b)                          (((a) < (b)) ? (a) : (b))
+#endif
+#ifndef MAX
+  #define MAX(a, b)                          (((a) > (b)) ? (a) : (b))
+#endif
 
 #define DMA_STREAM0_4_INDEX                  0U
 #define DMA_STREAM1_5_INDEX                  6U
@@ -85,29 +94,42 @@ typedef struct
    volatile uint32_t IFCR;
 } bdma_int_registers_t;
 
-typedef struct __attribute__ ((__packed__, aligned(32)))
+typedef struct __attribute__ ((__packed__, aligned (32)))
 {
    uint8_t mqtt_device_info_qos, mqtt_alert_qos, mqtt_audio_qos;
 } non_volatile_data_t;
 
-typedef struct __attribute__ ((__packed__, aligned(4)))
+typedef struct __attribute__ ((__packed__, aligned (4)))
 {
-   int16_t audio[2][PACKET_AUDIO_SAMPLES];
+   uint8_t start_delimiter[4];
+   int16_t audio[PACKET_AUDIO_SAMPLES];
    double timestamp;
    float lat, lon, ht;
    int32_t q1, q2, q3;
-   uint8_t delimiter[4];
-   int32_t audio_read_index, audio_clip_complete;
+   uint8_t end_delimiter[4];
 } data_packet_t;
 
-typedef struct __attribute__ ((__packed__, aligned(4)))
+typedef struct __attribute__ ((__packed__, aligned (4)))
+{
+   data_packet_t packets[2];
+   int32_t audio_read_index, audio_clip_complete;
+} data_packet_container_t;
+
+typedef struct __attribute__ ((__packed__, aligned (4)))
 {
    double timestamp;
    float lat, lon, ht;
    int32_t q1, q2, q3;
+   uint32_t firmware_date;
    uint8_t chip_temperature_alert;
    uint8_t signal_power, signal_quality;
 } device_info_t;
+
+typedef struct __attribute__ ((__packed__))
+{
+   uint32_t ai_firmware_version;
+   uint8_t class_probabilities[AI_NUM_CLASSES];
+} ai_result_t;
 
 typedef struct __attribute__ ((__packed__))
 {
@@ -116,7 +138,7 @@ typedef struct __attribute__ ((__packed__))
    float confidence, angle_of_arrival[3];
 } event_info_t;
 
-typedef struct __attribute__ ((__packed__, aligned(4)))
+typedef struct __attribute__ ((__packed__, aligned (4)))
 {
    uint8_t num_events, cell_signal_power;
    uint8_t cell_signal_quality, sensor_temperature_alert;
@@ -126,7 +148,7 @@ typedef struct __attribute__ ((__packed__, aligned(4)))
    event_info_t events[MAX_NUM_EVENTS_PER_ALERT];
 } alert_message_t;
 
-typedef struct __attribute__ ((__packed__, aligned(4)))
+typedef struct __attribute__ ((__packed__, aligned (4)))
 {
    uint8_t message_idx, is_final_message;
    uint8_t data[CELL_EVIDENCE_MAX_PAYLOAD_SIZE];
@@ -144,7 +166,7 @@ typedef enum
 // Shared Application Variables for Both Cores -------------------------------------------------------------------------
 
 extern non_volatile_data_t non_volatile_data;
-extern volatile data_packet_t data;
+extern volatile data_packet_container_t data;
 
 
 // Shared Application Variables for Core CM4 ---------------------------------------------------------------------------

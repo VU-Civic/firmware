@@ -73,25 +73,25 @@
 
 // Audio Definitions and Static Variables ------------------------------------------------------------------------------
 
-__attribute__((aligned (4), section (".dtcm")))
-static int16_t audio_data[2][AUDIO_NUM_CHANNELS][AUDIO_BUFFER_SAMPLES / AUDIO_NUM_CHANNELS];
+__attribute__ ((aligned (4), section (".dtcm")))
+static int16_t audio_data[2][AUDIO_NUM_CHANNELS][AUDIO_BUFFER_SAMPLES_PER_CHANNEL];
 
-__attribute__((aligned (4), section (".ramd1")))
+__attribute__ ((aligned (4), section (".ramd1")))
 static MDMA_LinkNodeTypeDef mdma_audio_xfers[2];
 
-__attribute__((aligned (4), section (".ramd1")))
+__attribute__ ((aligned (4), section (".ramd1")))
 static MDMA_LinkNodeTypeDef mdma_gps_xfers[AUDIO_NUM_DMAS_PER_CLIP];
 
-__attribute__((aligned (4), section (".ramd1")))
+__attribute__ ((aligned (4), section (".ramd1")))
 static uint32_t gps_trigger_states[AUDIO_NUM_DMAS_PER_CLIP];
 
-__attribute__((aligned (32), section (".ramd1")))
+__attribute__ ((aligned (32), section (".ramd1")))
 static int16_t audio_raw[2][AUDIO_BUFFER_SAMPLES];
 
 
 // Interrupt Service Routines ------------------------------------------------------------------------------------------
 
-__attribute__((section(".itcm")))
+__attribute__ ((section (".itcm")))
 void MDMA_IRQHandler(void)
 {
    // Ensure that the interrupt is relevant to this CPU
@@ -105,12 +105,13 @@ void MDMA_IRQHandler(void)
       data.audio_clip_complete = READ_BIT(GPS_TIME_TRIGGER_GPIO_Port->IDR, GPS_TIME_TRIGGER_Pin);
 
       // Initiate transfer of audio channels to the other core
-      WRITE_REG(MDMA_Channel2->CBNDTR, sizeof(data.audio[0]) & MDMA_CBNDTR_BNDT);
+      WRITE_REG(MDMA_Channel2->CBNDTR, sizeof(data.packets[0].audio) & MDMA_CBNDTR_BNDT);
       WRITE_REG(MDMA_Channel2->CSAR, (uint32_t)audio_data[data.audio_read_index][0]);
-      WRITE_REG(MDMA_Channel2->CDAR, (uint32_t)data.audio[data.audio_read_index]);
+      WRITE_REG(MDMA_Channel2->CDAR, (uint32_t)data.packets[data.audio_read_index].audio);
       SET_BIT(MDMA_Channel2->CCR, (MDMA_IT_TE | MDMA_IT_BT | MDMA_CCR_EN | MDMA_CCR_SWRQ));
 
-      // Process the newly received audio
+      // Feed the watchdog timer and process the newly received audio
+      cpu_feed_watchdog();
       onset_detection_invoke(audio_data[data.audio_read_index]);
    }
 }
@@ -221,7 +222,7 @@ void audio_init(void)
    // Initialize the non-peripheral GPIO pins
    WRITE_REG(GPS_TIME_TRIGGER_GPIO_Port->BSRR, (uint32_t)GPS_TIME_TRIGGER_Pin << 16U);
    uint32_t position = 32 - __builtin_clz(GPS_TIME_TRIGGER_Pin) - 1;
-   MODIFY_REG(GPS_TIME_TRIGGER_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_VERY_HIGH << (position * 2U)));
+   MODIFY_REG(GPS_TIME_TRIGGER_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_HIGH << (position * 2U)));
    MODIFY_REG(GPS_TIME_TRIGGER_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_OUTPUT_PP & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
    CLEAR_BIT(GPS_TIME_TRIGGER_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
    MODIFY_REG(GPS_TIME_TRIGGER_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_OUTPUT_PP & GPIO_MODE) << (position * 2U)));
@@ -277,19 +278,19 @@ void audio_init(void)
 
    // Initialize the SAI GPIO pins
    position = 32 - __builtin_clz(AUDIO_SD_Pin) - 1;
-   MODIFY_REG(AUDIO_SD_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_VERY_HIGH << (position * 2U)));
+   MODIFY_REG(AUDIO_SD_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_MEDIUM << (position * 2U)));
    MODIFY_REG(AUDIO_SD_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_AF_PP & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
    CLEAR_BIT(AUDIO_SD_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
    MODIFY_REG(AUDIO_SD_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (GPIO_AF10_SAI2 << ((position & 0x07U) * 4U)));
    MODIFY_REG(AUDIO_SD_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_AF_PP & GPIO_MODE) << (position * 2U)));
    position = 32 - __builtin_clz(AUDIO_CLK_Pin) - 1;
-   MODIFY_REG(AUDIO_CLK_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_VERY_HIGH << (position * 2U)));
+   MODIFY_REG(AUDIO_CLK_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_MEDIUM << (position * 2U)));
    MODIFY_REG(AUDIO_CLK_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_AF_PP & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
    CLEAR_BIT(AUDIO_CLK_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
    MODIFY_REG(AUDIO_CLK_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (GPIO_AF10_SAI2 << ((position & 0x07U) * 4U)));
    MODIFY_REG(AUDIO_CLK_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_AF_PP & GPIO_MODE) << (position * 2U)));
    position = 32 - __builtin_clz(AUDIO_FSYNC_Pin) - 1;
-   MODIFY_REG(AUDIO_FSYNC_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_VERY_HIGH << (position * 2U)));
+   MODIFY_REG(AUDIO_FSYNC_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_MEDIUM << (position * 2U)));
    MODIFY_REG(AUDIO_FSYNC_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_AF_PP & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
    CLEAR_BIT(AUDIO_FSYNC_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
    MODIFY_REG(AUDIO_FSYNC_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (GPIO_AF10_SAI2 << ((position & 0x07U) * 4U)));
@@ -421,7 +422,11 @@ void audio_init(void)
    audio_write_reg(PAGE_CFG_REG, 0x00);
 
    // Setup the internal regulator and VREF voltage
+#if REV_ID == REV_A
    audio_write_reg(BIAS_CFG_REG, 0x62);
+#else
+   audio_write_reg(BIAS_CFG_REG, 0x70);
+#endif
 
    // Configure device to operate in slave mode
    audio_write_reg(MST_CFG0_REG, 0b00000110);
@@ -439,8 +444,10 @@ void audio_init(void)
    audio_write_reg(CH1_CFG0_REG, 0x40);
    audio_write_reg(CH1_CFG2_REG, AUDIO_DIGITAL_GAIN);
    audio_write_reg(CH2_CFG0_REG, 0x40);
+#if REV_ID == REV_A
    audio_write_reg(CH3_CFG0_REG, 0x40);
    audio_write_reg(CH4_CFG0_REG, 0x40);
+#endif
    audio_write_reg(DSP_CFG1_REG, 0b10000000);
 
    // Disable unused GPIO pins and configure used PDM pins
@@ -457,17 +464,13 @@ void audio_init(void)
 
    // Configure PDM clock to output at 3.072MHz and latch on the appropriate edges
    audio_write_reg(PDMCLK_CFG_REG, 0x40);
-#if REV_ID == REV_A
-   audio_write_reg(PDMIN_CFG_REG, 0xC0);
-#else
-   audio_write_reg(PDMIN_CFG_REG, 0x80);
-#endif
+   audio_write_reg(PDMIN_CFG_REG, 0x00);
 
    // Configure output channel slot assignments
-   audio_write_reg(ASI_CH1_REG, 0x00);
-   audio_write_reg(ASI_CH2_REG, 0x01);
-   audio_write_reg(ASI_CH3_REG, 0x02);
-   audio_write_reg(ASI_CH4_REG, 0x03);
+   audio_write_reg(ASI_CH1_REG, 0x01);
+   audio_write_reg(ASI_CH2_REG, 0x00);
+   audio_write_reg(ASI_CH3_REG, 0x03);
+   audio_write_reg(ASI_CH4_REG, 0x02);
 
    // Configure enabled channels 1-4
    audio_write_reg(IN_CH_EN_REG, 0b11110000);
@@ -515,10 +518,6 @@ static volatile uint8_t new_audio_received;
 
 void MDMA_IRQHandler(void)
 {
-   // Create static variables to avoid stack allocation within an ISR
-   static const uint16_t raw_packet_size = sizeof(data.audio[0]);
-   static const uint16_t metadata_packet_size = raw_packet_size + offsetof(data_packet_t, audio_read_index) - offsetof(data_packet_t, timestamp);
-
    // Ensure that the interrupt is relevant to this CPU
    if (READ_BIT(MDMA_Channel2->CISR, (MDMA_FLAG_TE | MDMA_FLAG_BT)))
    {
@@ -526,19 +525,20 @@ void MDMA_IRQHandler(void)
       WRITE_REG(MDMA_Channel2->CIFCR, (MDMA_FLAG_TE | MDMA_FLAG_BT));
       new_audio_received = 1;
 
-      // Transmit new audio data for external processing
-      ai_send((uint8_t*)data.audio[data.audio_read_index], raw_packet_size);
+      // Update packet metadata upon full clip completion
       if (data.audio_clip_complete)
       {
-         // Update the audio metadata before transmitting
          gps_update_packet_llh();
-         gps_update_packet_timestamp();
+         gps_update_packet_timestamp(0);
          imu_update_packet_orientation();
          cell_update_device_details();
-         usb_send((uint8_t*)data.audio[data.audio_read_index], metadata_packet_size);
       }
       else
-         usb_send((uint8_t*)data.audio[data.audio_read_index], raw_packet_size);
+         gps_update_packet_timestamp(1);
+
+      // Transmit new audio data for external processing
+      ai_send((uint8_t*)&data.packets[data.audio_read_index], sizeof(data.packets[0]));
+      usb_send((uint8_t*)&data.packets[data.audio_read_index], sizeof(data.packets[0]));
    }
 }
 
@@ -548,10 +548,13 @@ void MDMA_IRQHandler(void)
 void audio_init(void)
 {
    // Initialize the shared audio data structure
-   const uint8_t packet_delimiter[] = PACKET_END_DELIMITER;
+   const uint8_t packet_start_delimiter[] = PACKET_START_DELIMITER;
+   const uint8_t packet_end_delimiter[] = PACKET_END_DELIMITER;
    memset((void*)&data, 0, sizeof(data));
-   for (int i = 0; i < sizeof(packet_delimiter); ++i)
-      data.delimiter[i] = packet_delimiter[i];
+   for (int i = 0; i < sizeof(packet_start_delimiter); ++i)
+      data.packets[0].start_delimiter[i] = data.packets[1].start_delimiter[i] = packet_start_delimiter[i];
+   for (int i = 0; i < sizeof(packet_end_delimiter); ++i)
+      data.packets[0].end_delimiter[i] = data.packets[1].end_delimiter[i] = packet_end_delimiter[i];
    new_audio_received = 0;
 
    // Enable data transfer completion interrupts
@@ -570,10 +573,13 @@ void audio_process_new_data(cell_audio_transmit_command_t transmit_evidence)
    // Only proceed if there is new unprocessed audio data
    if (new_audio_received)
    {
+      // Feed the watchdog timer
+      cpu_feed_watchdog();
+
       // Encode the audio data
       new_audio_received = 0;
       const opus_frame_t *result_begin, *result_end;
-      opusenc_encode((int16_t*)data.audio[data.audio_read_index], &result_begin, &result_end);
+      //TODO: Uncomment this and see how long it takes (in Ofast mode): opusenc_encode((int16_t*)data.packets[data.audio_read_index].audio, &result_begin, &result_end);
 
       // Transmit historical data if new evidence transmission was requested
       if (transmit_evidence == CELL_AUDIO_TRANSMIT_BEGIN)

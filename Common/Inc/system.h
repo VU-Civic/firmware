@@ -9,5 +9,6 @@ void chip_save_non_volatile(const non_volatile_data_t *nvm_data);
 void chip_initialize_unused_pins(void);
 void cpu_init(void);
 void cpu_sleep(void);
+void cpu_feed_watchdog(void);
 
 #endif  // #ifndef __SYSTEM_HEADER_H__

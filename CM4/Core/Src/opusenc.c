@@ -13,7 +13,7 @@
 
 // Static Opus Encoding Variables --------------------------------------------------------------------------------------
 
-__attribute__((aligned (4)))
+__attribute__ ((aligned (4)))
 static int16_t encode_buffer[OPUS_FRAME_SIZE];
 
 static OpusEncoder *opus_encoder;

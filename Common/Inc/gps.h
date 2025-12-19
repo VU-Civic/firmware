@@ -7,7 +7,7 @@
 
 void gps_init(void);
 uint8_t gps_get_timepulse_fired(void);
-void gps_update_packet_timestamp(void);
+void gps_update_packet_timestamp(uint8_t interpolate);
 void gps_update_packet_llh(void);
 
 #endif  // #ifdef CORE_CM4

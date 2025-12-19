@@ -6,64 +6,73 @@
 
 #define WINDOW_SIZE                256
 #define STEP_SIZE                  (WINDOW_SIZE / 2)
-#define NUM_WINDOWS                (1 + ((AUDIO_SAMPLE_RATE_HZ - WINDOW_SIZE) / STEP_SIZE))
+#define NUM_WINDOWS                (1 + ((AUDIO_BUFFER_SAMPLES_PER_CHANNEL - WINDOW_SIZE) / STEP_SIZE))
 
-//static arm_rfft_instance_q15 fft;
-//static q15_t hanning_window[WINDOW_SIZE];
-//static uint32_t onset_indices[MAX_NUM_ONSETS];
+#define arm_rfft_init              ARM_EXPAND(WINDOW_SIZE)
+#define ARM_EXPAND(x)              ARM_STRINGIFY(x)
+#define ARM_STRINGIFY(x)           arm_rfft_fast_init_ ## x ## _f32
+
+static arm_rfft_fast_instance_f32 fft;
+static float32_t hanning_window[WINDOW_SIZE];
+static uint32_t onset_indices[MAX_NUM_ONSETS];
 
 void onset_detection_init(void)
 {
    // Initialize the FFT structure
-   /*arm_rfft_init_q15(&fft, WINDOW_SIZE, 0, 1);
+   arm_rfft_init(&fft);
    memset(onset_indices, 0, sizeof(onset_indices));
 
    // Generate a static Hanning window
    for (size_t i = 0; i < WINDOW_SIZE; ++i)
-   {
-      const float val = 0.5f * (1.0f - arm_cos_f32(2.0f * PI * i / WINDOW_SIZE));
-      arm_float_to_q15(&val, &hanning_window[i], 1);
-   }*/
+      hanning_window[i] = 0.5f * (1.0f - arm_cos_f32(2.0f * PI * i / WINDOW_SIZE));
 }
 
-onset_details_t onset_detection_invoke(const int16_t (*audio_samples)[AUDIO_BUFFER_SAMPLES / AUDIO_NUM_CHANNELS])
+onset_details_t onset_detection_invoke(const int16_t (*audio_samples)[AUDIO_BUFFER_SAMPLES_PER_CHANNEL])
 {
-   static int16_t values[4][100];
-   for (int i = 0; i < 4; ++i)
-      memcpy(values[i], audio_samples[i], sizeof(values[i]));
-   // TODO: audio_samples should be 1 channel of audio (probably need mem-to-mem DMA transfer for this
-/*
    // Set up all necessary FFT structures
-   static q15_t windowed_signal[WINDOW_SIZE];
-   static q15_t fft_output[WINDOW_SIZE * 2], fft_magnitudes[WINDOW_SIZE / 2];
+   static float32_t input_signal[WINDOW_SIZE], windowed_signal[WINDOW_SIZE], fft_output[WINDOW_SIZE];
+   static float32_t fft_magnitudes[WINDOW_SIZE / 2], prev_magnitudes[WINDOW_SIZE / 2] = { 0.0f };
    onset_details_t details = { .num_onsets = 0, .indices = onset_indices };
 
    // Iterate through all spectrogram windows
    for (uint32_t i = 0, window = 0; window < NUM_WINDOWS; i += STEP_SIZE, ++window)
    {
-      // Apply a Hanning window to the audio signal
-      arm_mult_q15(audio_samples + i, hanning_window, windowed_signal, WINDOW_SIZE);
+      // Convert the audio signal to a normalized floating point representation
+      arm_q15_to_float(&audio_samples[0][i], input_signal, WINDOW_SIZE);
+
+      // Apply a Hanning window to the input signal
+      arm_mult_f32(input_signal, hanning_window, windowed_signal, WINDOW_SIZE);
 
       // Compute the FFT of the signal followed by its complex magnitude
-      arm_rfft_q15(&fft, windowed_signal, fft_output);
-      arm_cmplx_mag_q15(fft_output, fft_magnitudes, WINDOW_SIZE / 2);
-      // TODO: SEE IF NORMALIZING fft_magnitudes HELPS (i.e.: fft_magnitudes / sum(fft_magnitudes)) <- HOW WOULD THIS WORK IN Q15
+      arm_rfft_fast_f32(&fft, windowed_signal, fft_output, 0);
+      arm_cmplx_mag_f32(fft_output, fft_magnitudes, WINDOW_SIZE / 2);
+      // TODO: SEE IF NORMALIZING fft_magnitudes HELPS (i.e.: fft_magnitudes / sum(fft_magnitudes))
 
-      // TODO: Compute spectral flux: sum((mags - mags_prev) .^ 2)
+      // Compute the positive-only spectral flux
+      float32_t spectral_flux = 0.0f;
+      for (uint32_t bin = 0; bin < (WINDOW_SIZE / 2); ++bin)
+      {
+         const float32_t difference = fft_magnitudes[bin] - prev_magnitudes[bin];
+         if (difference > 0.0f)
+            spectral_flux += difference;
+      }
 
-      // TODO: Search for acoustic event onsets
+      // Update the previous magnitudes for the next iteration
+      arm_copy_f32(fft_magnitudes, prev_magnitudes, WINDOW_SIZE / 2);
+
+      // TODO: Search for acoustic event onsets (details.indices[details.num_onsets++] = i)
    }
 
-   // Return details about detected onsets
-   return details;*/
+   // TODO: Search for AoA for each detected onset
+   /*for (uint32_t i = 0; i < details.num_onsets; ++i)
+   {
+      uint32_t onset = details.indices[i];
+      for (uint32_t ch = 0; ch < AUDIO_NUM_CHANNELS; ++ch)
+         audio_samples[ch][onset];
+   }*/
 
-   /*
-   Will be of format:
-   for (uint32_t ch = 0; ch < AUDIO_NUM_CHANNELS; ++ch)
-      for (uint32_t sample = 0; sample < (AUDIO_BUFFER_SAMPLES / AUDIO_NUM_CHANNELS); ++sample)
-         process(audio_samples[ch][sample]);
-    */
-   return (onset_details_t){ .num_onsets = 0, .indices = NULL };
+   // Return details about detected onsets
+   return details;
 }
 
 #endif  // #ifdef CORE_CM7

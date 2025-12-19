@@ -170,11 +170,3 @@ the various hardware components, as well as the maximum amount of time available
 of the various CPU-based algorithms:
 
 ![Firmware Temporal Data Flow](Docs/images/TemporalDataFlow.png "Firmware Temporal Data Flow")
-
-
-## TODO Items
-
-- [ ] Test non-volatile storage functionality
-- [ ] Update for RevB to transfer to/from AI using SPI
-- [ ] Finish cellular FSM
-- [ ] Verify logic for cellular transmission in case of bad network connectivity

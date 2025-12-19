@@ -1233,10 +1233,10 @@ typedef struct __attribute__ ((__packed__))
 
 // IMU Static Variables ------------------------------------------------------------------------------------------------
 
-__attribute__((aligned (4), section (".ramd3")))
+__attribute__ ((aligned (4), section (".ramd3")))
 static volatile imu_data_t imu_data;
 
-__attribute__((aligned (4), section (".ramd3")))
+__attribute__ ((aligned (4), section (".ramd3")))
 static volatile uint16_t imu_data_count;
 
 static bdma_int_registers_t *bdma_int_registers;
@@ -1257,7 +1257,7 @@ void I2C4_ER_IRQHandler(void)
 #if REV_ID == REV_A
 void EXTI15_10_IRQHandler(void)
 #else
-void IMU_Int_IRQHandler(void)
+void EXTI9_5_IRQHandler(void)
 #endif
 {
    // Clear the data-ready interrupt and toggle relevant interrupt lines
@@ -1828,9 +1828,9 @@ void imu_start(void)
 void imu_update_packet_orientation(void)
 {
    // Update the most recently received quaternion data
-   data.q1 = curr_q1;
-   data.q2 = curr_q2;
-   data.q3 = curr_q3;
+   data.packets[0].q1 = data.packets[1].q1 = curr_q1;
+   data.packets[0].q2 = data.packets[1].q2 = curr_q2;
+   data.packets[0].q3 = data.packets[1].q3 = curr_q3;
 }
 
 void imu_quat_to_roll_pitch_yaw(double qw, double qx, double qy, double qz, double *x_roll, double *y_pitch, double *z_yaw)
