@@ -135,9 +135,24 @@
 			<locationURI>PARENT-1-PROJECT_LOC/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_spi_ex.c</locationURI>
 		</link>
 		<link>
+			<name>Drivers/CMSIS_DSP/Source/BasicMathFunctions/arm_abs_f32.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/BasicMathFunctions/arm_abs_f32.c</locationURI>
+		</link>
+		<link>
 			<name>Drivers/CMSIS_DSP/Source/BasicMathFunctions/arm_mult_f32.c</name>
 			<type>1</type>
 			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/BasicMathFunctions/arm_mult_f32.c</locationURI>
+		</link>
+		<link>
+			<name>Drivers/CMSIS_DSP/Source/BasicMathFunctions/arm_offset_f32.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/BasicMathFunctions/arm_offset_f32.c</locationURI>
+		</link>
+		<link>
+			<name>Drivers/CMSIS_DSP/Source/BasicMathFunctions/arm_scale_f32.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/BasicMathFunctions/arm_scale_f32.c</locationURI>
 		</link>
 		<link>
 			<name>Drivers/CMSIS_DSP/Source/CommonTables/arm_common_tables.c</name>
@@ -150,9 +165,34 @@
 			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/CommonTables/arm_const_structs.c</locationURI>
 		</link>
 		<link>
+			<name>Drivers/CMSIS_DSP/Source/CommonTables/arm_mve_tables.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/CommonTables/arm_mve_tables.c</locationURI>
+		</link>
+		<link>
+			<name>Drivers/CMSIS_DSP/Source/ComplexMathFunctions/arm_cmplx_dot_prod_f32.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/ComplexMathFunctions/arm_cmplx_dot_prod_f32.c</locationURI>
+		</link>
+		<link>
 			<name>Drivers/CMSIS_DSP/Source/ComplexMathFunctions/arm_cmplx_mag_f32.c</name>
 			<type>1</type>
 			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/ComplexMathFunctions/arm_cmplx_mag_f32.c</locationURI>
+		</link>
+		<link>
+			<name>Drivers/CMSIS_DSP/Source/ComplexMathFunctions/arm_cmplx_mag_squared_f32.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/ComplexMathFunctions/arm_cmplx_mag_squared_f32.c</locationURI>
+		</link>
+		<link>
+			<name>Drivers/CMSIS_DSP/Source/ComplexMathFunctions/arm_cmplx_mult_cmplx_f32.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/ComplexMathFunctions/arm_cmplx_mult_cmplx_f32.c</locationURI>
+		</link>
+		<link>
+			<name>Drivers/CMSIS_DSP/Source/ComplexMathFunctions/arm_cmplx_mult_real_f32.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/ComplexMathFunctions/arm_cmplx_mult_real_f32.c</locationURI>
 		</link>
 		<link>
 			<name>Drivers/CMSIS_DSP/Source/FastMathFunctions/arm_cos_f32.c</name>
@@ -160,9 +200,74 @@
 			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/FastMathFunctions/arm_cos_f32.c</locationURI>
 		</link>
 		<link>
+			<name>Drivers/CMSIS_DSP/Source/FastMathFunctions/arm_sin_f32.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/FastMathFunctions/arm_sin_f32.c</locationURI>
+		</link>
+		<link>
+			<name>Drivers/CMSIS_DSP/Source/FastMathFunctions/arm_vexp_f32.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/FastMathFunctions/arm_vexp_f32.c</locationURI>
+		</link>
+		<link>
+			<name>Drivers/CMSIS_DSP/Source/FastMathFunctions/arm_vlog_f32.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/FastMathFunctions/arm_vlog_f32.c</locationURI>
+		</link>
+		<link>
+			<name>Drivers/CMSIS_DSP/Source/StatisticsFunctions/arm_absmax_no_idx_f32.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/StatisticsFunctions/arm_absmax_no_idx_f32.c</locationURI>
+		</link>
+		<link>
+			<name>Drivers/CMSIS_DSP/Source/StatisticsFunctions/arm_absmin_no_idx_f32.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/StatisticsFunctions/arm_absmin_no_idx_f32.c</locationURI>
+		</link>
+		<link>
+			<name>Drivers/CMSIS_DSP/Source/StatisticsFunctions/arm_max_no_idx_f32.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/StatisticsFunctions/arm_max_no_idx_f32.c</locationURI>
+		</link>
+		<link>
+			<name>Drivers/CMSIS_DSP/Source/StatisticsFunctions/arm_mean_f32.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/StatisticsFunctions/arm_mean_f32.c</locationURI>
+		</link>
+		<link>
+			<name>Drivers/CMSIS_DSP/Source/StatisticsFunctions/arm_min_no_idx_f32.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/StatisticsFunctions/arm_min_no_idx_f32.c</locationURI>
+		</link>
+		<link>
+			<name>Drivers/CMSIS_DSP/Source/StatisticsFunctions/arm_std_f32.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/StatisticsFunctions/arm_std_f32.c</locationURI>
+		</link>
+		<link>
+			<name>Drivers/CMSIS_DSP/Source/StatisticsFunctions/arm_var_f32.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/StatisticsFunctions/arm_var_f32.c</locationURI>
+		</link>
+		<link>
 			<name>Drivers/CMSIS_DSP/Source/SupportFunctions/arm_copy_f32.c</name>
 			<type>1</type>
 			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/SupportFunctions/arm_copy_f32.c</locationURI>
+		</link>
+		<link>
+			<name>Drivers/CMSIS_DSP/Source/SupportFunctions/arm_copy_q15.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/SupportFunctions/arm_copy_q15.c</locationURI>
+		</link>
+		<link>
+			<name>Drivers/CMSIS_DSP/Source/SupportFunctions/arm_copy_q7.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/SupportFunctions/arm_copy_q7.c</locationURI>
+		</link>
+		<link>
+			<name>Drivers/CMSIS_DSP/Source/SupportFunctions/arm_float_to_q15.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/SupportFunctions/arm_float_to_q15.c</locationURI>
 		</link>
 		<link>
 			<name>Drivers/CMSIS_DSP/Source/SupportFunctions/arm_q15_to_float.c</name>

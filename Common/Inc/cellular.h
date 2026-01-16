@@ -1,7 +1,7 @@
 #ifndef __CELLULAR_HEADER_H__
 #define __CELLULAR_HEADER_H__
 
-#include "opusenc.h"
+#include "opus_config.h"
 
 #ifdef CORE_CM4
 

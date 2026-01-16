@@ -32,20 +32,18 @@
 #define CELL_MQTT_DEVICES_TOPIC              35543
 #define CELL_MQTT_CONTROL_TOPIC              24553
 #define CELL_MQTT_MAX_PAYLOAD_SIZE_BYTES     1016
-#define CELL_EVIDENCE_MAX_PAYLOAD_SIZE       (CELL_MQTT_MAX_PAYLOAD_SIZE_BYTES - 2)
+#define CELL_MQTT_MESSAGE_INDEX_MASK         0x7F
+#define CELL_MQTT_MESSAGE_FINAL_MASK         0x80
+#define CELL_EVIDENCE_MAX_PAYLOAD_SIZE       (CELL_MQTT_MAX_PAYLOAD_SIZE_BYTES - 9)
 
 #define USB_VID                              4617
 #define USB_PID                              2829
 #define USB_PRODUCT_STRING                   "CivicAlert"
 #define USB_MANUFACTURER_STRING              "HedgeTech"
 
-#define OPUS_FRAME_DELIMITER                 0xAAAA
-#define OPUS_INPUT_AUDIO_NUM_CHANNELS        1
-#define OPUS_APPLICATION_TYPE                OPUS_APPLICATION_VOIP // TODO: TEST CHANGING THIS TO _AUDIO
-#define OPUS_SIGNAL_TYPE                     OPUS_AUTO // TODO: SEE IF OPUS_SIGNAL_VOICE OR OPUS_SIGNAL_MUSIC USES LESS CPU WITHOUT AFFECTING SOUND
-#define OPUS_ENCODED_BIT_RATE                16000
-#define OPUS_COMPLEXITY                      0
-#define OPUS_MS_PER_FRAME                    60
+#define OPUS_FRAME_DELIMITER                 0xAA
+#define OPUS_ENCODED_BIT_RATE                15000
+#define OPUS_MS_PER_FRAME                    20
 #define OPUS_HISTORY_MS                      960
 
 #define MIN_MS_BETWEEN_ONSETS                20
@@ -99,17 +97,18 @@ typedef struct __attribute__ ((__packed__, aligned (32)))
    uint8_t mqtt_device_info_qos, mqtt_alert_qos, mqtt_audio_qos;
 } non_volatile_data_t;
 
-typedef struct __attribute__ ((__packed__, aligned (4)))
+typedef struct __attribute__ ((__packed__, aligned (16)))
 {
    uint8_t start_delimiter[4];
    int16_t audio[PACKET_AUDIO_SAMPLES];
    double timestamp;
    float lat, lon, ht;
    int32_t q1, q2, q3;
+   uint8_t reserved[8];
    uint8_t end_delimiter[4];
 } data_packet_t;
 
-typedef struct __attribute__ ((__packed__, aligned (4)))
+typedef struct __attribute__ ((__packed__, aligned (16)))
 {
    data_packet_t packets[2];
    int32_t audio_read_index, audio_clip_complete;
@@ -150,7 +149,7 @@ typedef struct __attribute__ ((__packed__, aligned (4)))
 
 typedef struct __attribute__ ((__packed__, aligned (4)))
 {
-   uint8_t message_idx, is_final_message;
+   uint8_t device_id[7], clip_id, message_idx_and_final;
    uint8_t data[CELL_EVIDENCE_MAX_PAYLOAD_SIZE];
 } evidence_message_t;
 
