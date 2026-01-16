@@ -79,7 +79,7 @@
 #define LNA_GAIN_LOW                   0x01
 #define LNA_GAIN_BYPASS                0x02
 #define CFG_HW_RF_LNA_MODE             0x57, 0x00, 0xA3, 0x20
-#define HW_RF_LNA_MODE                 LNA_GAIN_NORMAL  // TODO: CHECK IF CHANGING THIS HELPS (AFTER V_BCKP IS CONNECTED SO THAT BBR DOESN'T GET ERASED DURING HW RESET)
+#define HW_RF_LNA_MODE                 LNA_GAIN_NORMAL
 
 #define UBX_GET_INTERFACE_CFG_DATA     CFG_I2C_ENABLED, CFG_SPI_ENABLED, CFG_UART1INPROT_UBX, CFG_UART1OUTPROT_UBX, CFG_UART1INPROT_NMEA, CFG_UART1OUTPROT_NMEA
 #define UBX_SET_INTERFACE_CFG_DATA     CFG_I2C_ENABLED, 0x00, CFG_SPI_ENABLED, 0x00, CFG_UART1INPROT_UBX, 0x01, CFG_UART1OUTPROT_UBX, 0x01, CFG_UART1INPROT_NMEA, 0x00, CFG_UART1OUTPROT_NMEA, 0x00
@@ -243,7 +243,7 @@ typedef struct __attribute__ ((packed))
 {
    uint32_t iTOW;
    uint8_t version, numSigs, reserved0[2];
-   ubx_nav_sig_data_t data[1];
+   ubx_nav_sig_data_t data[32];
 } ubx_nav_sig_t;
 
 
@@ -351,6 +351,24 @@ static ubx_message_type_t gps_process_message(const uint8_t* msg, uint16_t max_m
       return UBX_MON_VER;
    else if ((msg[UBX_MSG_CLASS_OFFSET] == 0x05) && ((msg[UBX_MSG_ID_OFFSET] == 0x00) || (msg[UBX_MSG_ID_OFFSET] == 0x01)))
       return UBX_ACK_ACK;
+   else if ((msg[UBX_MSG_CLASS_OFFSET] == 0x01) && (msg[UBX_MSG_ID_OFFSET] == 0x43))
+   {
+      static uint32_t average_cno;
+      static uint8_t num_detections, max_cno, min_cno;
+      const ubx_nav_sig_t *message = (const ubx_nav_sig_t*)(msg + UBX_MSG_PAYLOAD_OFFSET);
+      average_cno = 0; min_cno = 200;
+      num_detections = max_cno = 0;
+      for (uint8_t i = 0; (i < 20) && (i < message->numSigs); ++i)
+         if ((message->data[i].health == 1) && (message->data[i].qualityInd > 4))
+         {
+            max_cno = (max_cno > message->data[i].cno) ? max_cno : message->data[i].cno;
+            min_cno = (min_cno < message->data[i].cno) ? min_cno : message->data[i].cno;
+            average_cno += message->data[i].cno;
+            ++num_detections;
+         }
+      average_cno /= num_detections;
+      return UBX_NAV_SIG;
+   }
    return UBX_MSG_UNKNOWN;
 }
 
@@ -595,14 +613,6 @@ static uint8_t gps_verify_or_set_lna_gain(void)
    return configuration_changed;
 }
 
-static void gps_poll_signal_data(void)
-{
-   // Send a request for data related to the currently visible satellite constellation
-   uint8_t ubx_poll_nav_sig_msg[] = { UBX_SYNC, UBX_NAV_SIG_MSG, UBX_MSG_LEN_PLACEHOLDER, UBX_MSG_CKSUM_PLACEHOLDER };
-   calculate_length_and_checksum(ubx_poll_nav_sig_msg, sizeof(ubx_poll_nav_sig_msg));
-   gps_send_and_receive(UBX_NAV_SIG, ubx_poll_nav_sig_msg, sizeof(ubx_poll_nav_sig_msg));
-}
-
 
 // Interrupt Service Routines ------------------------------------------------------------------------------------------
 
@@ -808,6 +818,14 @@ void gps_update_packet_llh(void)
    data.packets[0].lat = data.packets[1].lat = lat_degrees;
    data.packets[0].lon = data.packets[1].lon = lon_degrees;
    data.packets[0].ht = data.packets[1].ht = height_meters;
+}
+
+void gps_poll_signal_data(void)
+{
+   // Send a request for data related to the currently visible satellite constellation
+   uint8_t ubx_poll_nav_sig_msg[] = { UBX_SYNC, UBX_NAV_SIG_MSG, UBX_MSG_LEN_PLACEHOLDER, UBX_MSG_CKSUM_PLACEHOLDER };
+   calculate_length_and_checksum(ubx_poll_nav_sig_msg, sizeof(ubx_poll_nav_sig_msg));
+   gps_transmit(ubx_poll_nav_sig_msg, sizeof(ubx_poll_nav_sig_msg));
 }
 
 #endif  // #ifdef CORE_CM4
