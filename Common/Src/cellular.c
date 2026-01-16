@@ -157,6 +157,7 @@ static uint32_t info_message_length, alert_message_length;
 #else
 static char publish_message_buffer[CELL_MAX_AT_COMMAND_SIZE];
 #endif
+static evidence_message_t evidence_message;
 
 static volatile mqtt_operation_t mqtt_operation_awaiting_ack = MQTT_DONE;
 static volatile uint8_t mqtt_result = 0, pending_messages = 0, connectivity_changed = 0, signal_power = 255;
@@ -164,11 +165,9 @@ static volatile uint8_t cell_modem_available = 0, configure_modem = 0, mqtt_conn
 static volatile uint8_t valid_cgreg = 0, valid_cereg = 0, valid_pdp = 0, temperature_alert = 0;
 static volatile uint8_t cell_busy = 0, device_info_update = 0, mqtt_subscribed = 0, prompt_received = 0;
 static volatile uint8_t command_acked = 0, command_nacked = 0, timed_out = 0, in_holdoff_period = 0;
-static volatile char imei[CELL_IMEI_LENGTH] = { 0 }, device_id[CELL_IMEI_LENGTH] = { 0 };
+static volatile char imei[CELL_IMEI_LENGTH+1] = { 0 }, device_id[CELL_IMEI_LENGTH] = { 0 };
 static volatile char sim_id[SIM_CARD_ID_MAX_LENGTH+1], *incoming_message = 0;
 static volatile uint32_t baud_rate = 0, cme_error = 0;
-static evidence_message_t evidence_message;
-static uint16_t evidence_message_idx = 0;
 
 
 // Private Helper Functions --------------------------------------------------------------------------------------------
@@ -333,10 +332,10 @@ static uint8_t cell_mqtt_publish_alert(const alert_message_t *alert)
    return cell_mqtt_publish_binary(publish_alert_message, alert_message_length, (char*)alert, sizeof(alert_message_t), CELL_MAX_NETWORK_RESPONSE_MS);
 }
 
-static uint8_t cell_mqtt_publish_audio(uint8_t *audio, uint32_t audio_len)
+static uint8_t cell_mqtt_publish_audio(const evidence_message_t *evidence_message, uint16_t evidence_message_length)
 {
    // Transfer this audio clip to the network
-   return cell_mqtt_publish_binary(publish_audio_message, 2 + sizeof(CELL_MQTTSN_PUB_BINARY_AUDIO_MSG) + offsetof(evidence_message_t, data) + evidence_message_idx, (char*)&evidence_message, offsetof(evidence_message_t, data) + evidence_message_idx, CELL_MAX_NETWORK_RESPONSE_MS);
+   return cell_mqtt_publish_binary(publish_audio_message, 2 + sizeof(CELL_MQTTSN_PUB_BINARY_AUDIO_MSG) + offsetof(evidence_message_t, data) + evidence_message_length, (char*)evidence_message, offsetof(evidence_message_t, data) + evidence_message_length, CELL_MAX_NETWORK_RESPONSE_MS);
 }
 
 #else
@@ -399,11 +398,11 @@ static uint8_t cell_mqtt_publish_alert(const alert_message_t *alert)
    return mqtt_result;
 }
 
-static uint8_t cell_mqtt_publish_audio(void)
+static uint8_t cell_mqtt_publish_audio(const evidence_message_t *evidence_message, uint16_t evidence_message_length)
 {
    // Set up the publish transfer buffer
    memcpy(publish_message_buffer, CELL_MQTTSN_PUBLISH_AUDIO_MSG, sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG));
-   const uint32_t message_len = 2 + sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG) + hex_encode_binary_data(publish_message_buffer + sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG) - 1, (const uint8_t*)&evidence_message, offsetof(evidence_message_t, data) + evidence_message_idx);
+   const uint32_t message_len = 2 + sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG) + hex_encode_binary_data(publish_message_buffer + sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG) - 1, (const uint8_t*)evidence_message, offsetof(evidence_message_t, data) + evidence_message_length);
    memcpy(publish_message_buffer + message_len - 3, "\"\r", 2);
 
    // Issue the publish command and wait for a response
@@ -473,11 +472,11 @@ static uint8_t cell_configure_modem(void)
       for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_RETRIEVE_IMEI_MSG, sizeof(CELL_RETRIEVE_IMEI_MSG), 1000); ++retries);
       for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_LOAD_MQTTSN_CONFIG_MSG, sizeof(CELL_LOAD_MQTTSN_CONFIG_MSG), 1000); ++retries);
       for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_READ_MQTTSN_CONFIG_MSG, sizeof(CELL_READ_MQTTSN_CONFIG_MSG), 1000); ++retries);
-      if (memcmp((char*)imei, (char*)device_id, sizeof(imei)))
+      if (memcmp((char*)imei, (char*)device_id, CELL_IMEI_LENGTH))
       {
-         memcpy((char*)device_id, (char*)imei, sizeof(imei));
+         memcpy((char*)device_id, (char*)imei, CELL_IMEI_LENGTH);
          char set_client_id_msg[] = CELL_SET_CLIENT_ID_MSG;
-         memcpy((char*)set_client_id_msg + CLIENT_ID_IMEI_OFFSET, (char*)imei, sizeof(imei));
+         memcpy((char*)set_client_id_msg + CLIENT_ID_IMEI_OFFSET, (char*)imei, CELL_IMEI_LENGTH);
          for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(set_client_id_msg, sizeof(set_client_id_msg), 500); ++retries);
          for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_SET_SERVER_ADDR_MSG, sizeof(CELL_SET_SERVER_ADDR_MSG), 500); ++retries);
          for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_SET_CONN_TIMEOUT_MSG, sizeof(CELL_SET_CONN_TIMEOUT_MSG), 500); ++retries);
@@ -489,6 +488,7 @@ static uint8_t cell_configure_modem(void)
          for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_INIT_BEARER_CFG_MSG, sizeof(CELL_INIT_BEARER_CFG_MSG), 500); ++retries);
          for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_ENABLE_RADIO_MSG, sizeof(CELL_ENABLE_RADIO_MSG), 500); ++retries);
       }
+      *(uint64_t*)evidence_message.device_id = strtoull((char*)imei, NULL, 10);
 
       // Manually poll to ensure that connectivity status flags are properly initialized at boot
       for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_POLL_CGREG_MSG, sizeof(CELL_POLL_CGREG_MSG), 500); ++retries);
@@ -705,8 +705,8 @@ static uint16_t cell_process_message(char* msg, uint16_t max_msg_len)
    else if ((max_msg_len >= (1 + CELL_IMEI_LENGTH + sizeof(CELL_IMEI_MSG))) && (memcmp(msg, CELL_IMEI_MSG, sizeof(CELL_IMEI_MSG) - 1) == 0))
    {
       msg = find_start_of_message(msg, sizeof(CELL_IMEI_MSG) - 1, &max_msg_len) + 1;
-      memcpy((char*)imei, msg, sizeof(imei));
-      msg += sizeof(imei) + 3;
+      memcpy((char*)imei, msg, CELL_IMEI_LENGTH);
+      msg += CELL_IMEI_LENGTH + 3;
    }
    else if ((max_msg_len >= (3 + CELL_IMEI_LENGTH + sizeof(CELL_MQTTSN_CLIENT_ID_MSG))) && (memcmp(msg, CELL_MQTTSN_CLIENT_ID_MSG, sizeof(CELL_MQTTSN_CLIENT_ID_MSG) - 1) == 0))
    {
@@ -842,6 +842,7 @@ void cell_power_on(void)
 void cell_init(void)
 {
    // Initialize the various MQTT publish messages
+   memset(&evidence_message, 0, sizeof(evidence_message));
 #ifdef CELL_MQTT_USE_BINARY_PUBLISH
    info_message_length = sizeof(CELL_MQTTSN_PUB_BINARY_INFO_MSG);
    memcpy(publish_info_message, CELL_MQTTSN_PUB_BINARY_INFO_MSG, sizeof(CELL_MQTTSN_PUB_BINARY_INFO_MSG));
@@ -1108,10 +1109,6 @@ void cell_update_device_details(void)
 
 void cell_transmit_alert(alert_message_t *alert)
 {
-   // Reset the evidence message storage metadata
-   evidence_message.message_idx = evidence_message.is_final_message = 0;
-   evidence_message_idx = 0;
-
    // Piggyback the current device details onto the event alert message
    alert->sensor_temperature_alert = device_info.chip_temperature_alert;
    alert->cell_signal_power = device_info.signal_power;
@@ -1122,27 +1119,39 @@ void cell_transmit_alert(alert_message_t *alert)
 void cell_transmit_audio(const opus_frame_t *restrict audio_frame, uint8_t is_final_frame)
 {
    // Append the audio frame to the current evidence packet, sending a full packet and splitting if necessary
-   if ((CELL_EVIDENCE_MAX_PAYLOAD_SIZE - evidence_message_idx) < (audio_frame->num_encoded_bytes + offsetof(opus_frame_t, encoded_data)))
+   static uint16_t evidence_message_idx = 0;
+   const uint16_t space_remaining = CELL_EVIDENCE_MAX_PAYLOAD_SIZE - evidence_message_idx;
+   const uint16_t to_copy = audio_frame->num_encoded_bytes + offsetof(opus_frame_t, encoded_data);
+   if (space_remaining < to_copy)
    {
-      memcpy(evidence_message.data + evidence_message_idx, audio_frame, CELL_EVIDENCE_MAX_PAYLOAD_SIZE - evidence_message_idx);
-      cell_mqtt_publish_audio();
-      memcpy(evidence_message.data, (uint8_t*)audio_frame + CELL_EVIDENCE_MAX_PAYLOAD_SIZE - evidence_message_idx, (audio_frame->num_encoded_bytes + offsetof(opus_frame_t, encoded_data)) - (CELL_MQTT_MAX_PAYLOAD_SIZE_BYTES - evidence_message_idx));
-      evidence_message_idx = audio_frame->num_encoded_bytes + offsetof(opus_frame_t, encoded_data) - (CELL_EVIDENCE_MAX_PAYLOAD_SIZE - evidence_message_idx);
-      ++evidence_message.message_idx;
+      memcpy(evidence_message.data + evidence_message_idx, audio_frame, space_remaining);
+      cell_mqtt_publish_audio(&evidence_message, evidence_message_idx + space_remaining);
+      evidence_message_idx = to_copy - space_remaining;
+      memcpy(evidence_message.data, (uint8_t*)audio_frame + space_remaining, evidence_message_idx);
+      ++evidence_message.message_idx_and_final;
    }
    else
    {
-      memcpy(evidence_message.data + evidence_message_idx, audio_frame, audio_frame->num_encoded_bytes + offsetof(opus_frame_t, encoded_data));
-      evidence_message_idx += audio_frame->num_encoded_bytes + offsetof(opus_frame_t, encoded_data);
+      memcpy(evidence_message.data + evidence_message_idx, audio_frame, to_copy);
+      evidence_message_idx += to_copy;
    }
 
    // Send the evidence packet if full or if this is the final audio frame
-   evidence_message.is_final_message = is_final_frame;
    if (is_final_frame || (evidence_message_idx == CELL_EVIDENCE_MAX_PAYLOAD_SIZE))
    {
-      cell_mqtt_publish_audio();
-      ++evidence_message.message_idx;
+      // Set the "final packet" flag if necessary before sending
+      evidence_message.message_idx_and_final |= is_final_frame ? CELL_MQTT_MESSAGE_FINAL_MASK : 0;
+      cell_mqtt_publish_audio(&evidence_message, evidence_message_idx);
+
+      // Reset the evidence message metadata
       evidence_message_idx = 0;
+      if (is_final_frame)
+      {
+         evidence_message.clip_id++;
+         evidence_message.message_idx_and_final = 0;
+      }
+      else
+         evidence_message.message_idx_and_final++;
    }
 }
 
