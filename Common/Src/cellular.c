@@ -104,7 +104,7 @@
 #define CELL_MQTTSN_REGISTER_MSG          "AT+UMQTTSNC=2,"
 #define CELL_MQTTSN_PUBLISH_INFO_MSG      "AT+UMQTTSNC=4,1,0,1,1,\"" STRINGIZE(CELL_MQTT_DEVICES_TOPIC) "\",\""
 #define CELL_MQTTSN_PUBLISH_ALERT_MSG     "AT+UMQTTSNC=4,1,0,1,1,\"" STRINGIZE(CELL_MQTT_ALERT_TOPIC) "\",\""
-#define CELL_MQTTSN_PUBLISH_AUDIO_MSG     "AT+UMQTTSNC=4,0,0,1,1,\"" STRINGIZE(CELL_MQTT_EVIDENCE_TOPIC) "\",\""
+#define CELL_MQTTSN_PUBLISH_AUDIO_MSG     "AT+UMQTTSNC=4,0,0,0,1,\"" STRINGIZE(CELL_MQTT_EVIDENCE_TOPIC) "\",\""
 #define CELL_MQTTSN_PUB_BINARY_INFO_MSG   "AT+UMQTTSNC=12,1,0,1,\"" STRINGIZE(CELL_MQTT_DEVICES_TOPIC) "\","
 #define CELL_MQTTSN_PUB_BINARY_ALERT_MSG  "AT+UMQTTSNC=12,1,0,1,\"" STRINGIZE(CELL_MQTT_ALERT_TOPIC) "\","
 #define CELL_MQTTSN_PUB_BINARY_AUDIO_MSG  "AT+UMQTTSNC=12,0,0,1,\"" STRINGIZE(CELL_MQTT_EVIDENCE_TOPIC) "\","
@@ -355,6 +355,40 @@ static uint32_t hex_encode_binary_data(char *output, const uint8_t *input, uint3
    return input_num_bytes * 2;
 }
 
+static uint32_t base64_encode_binary_data(char *output, const uint8_t *input, uint32_t input_num_bytes)
+{
+   // The standard Base64 alphabet table
+   static const char encoding_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+   // Iterate through all input characters in groups of 3 bytes
+   uint32_t in_idx = 0, out_idx = 0;
+   const uint32_t three_byte_packets = input_num_bytes / 3;
+   for (uint32_t i = 0; i < three_byte_packets; ++i, in_idx += 3, out_idx += 4)
+   {
+      const uint32_t a = input[in_idx], b = input[in_idx + 1], c = input[in_idx + 2];
+      const uint32_t triple = (a << 0x10) + (b << 0x08) + c;
+      output[out_idx] = encoding_table[(triple >> 18) & 0x3F];
+      output[out_idx + 1] = encoding_table[(triple >> 12) & 0x3F];
+      output[out_idx + 2] = encoding_table[(triple >> 6) & 0x3F];
+      output[out_idx + 3] = encoding_table[triple & 0x3F];
+   }
+
+   // Pad and encode any remaining bytes
+   if (in_idx < input_num_bytes)
+   {
+      const uint32_t a = input[in_idx++];
+      const uint32_t b = (in_idx < input_num_bytes) ? input[in_idx++ + 1] : '=';
+      const uint32_t c = (in_idx < input_num_bytes) ? input[in_idx + 2] : '=';
+      const uint32_t triple = (a << 0x10) + (b << 0x08) + c;
+      output[out_idx] = encoding_table[(triple >> 18) & 0x3F];
+      output[out_idx + 1] = encoding_table[(triple >> 12) & 0x3F];
+      output[out_idx + 2] = encoding_table[(triple >> 6) & 0x3F];
+      output[out_idx + 3] = encoding_table[triple & 0x3F];
+      out_idx += 4;
+   }
+   return out_idx;
+}
+
 static void cell_mqtt_publish_binary(char *command, uint32_t command_len, uint32_t network_timeout_ms)
 {
    // Issue a publish command to transfer the binary data
@@ -402,7 +436,7 @@ static uint8_t cell_mqtt_publish_audio(const evidence_message_t *evidence_messag
 {
    // Set up the publish transfer buffer
    memcpy(publish_message_buffer, CELL_MQTTSN_PUBLISH_AUDIO_MSG, sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG));
-   const uint32_t message_len = 2 + sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG) + hex_encode_binary_data(publish_message_buffer + sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG) - 1, (const uint8_t*)evidence_message, offsetof(evidence_message_t, data) + evidence_message_length);
+   const uint32_t message_len = 2 + sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG) + base64_encode_binary_data(publish_message_buffer + sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG) - 1, (const uint8_t*)evidence_message, offsetof(evidence_message_t, data) + evidence_message_length);
    memcpy(publish_message_buffer + message_len - 3, "\"\r", 2);
 
    // Issue the publish command and wait for a response
