@@ -1,7 +1,6 @@
 // Header Inclusions ---------------------------------------------------------------------------------------------------
 
-#include "opusenc.h"
-#include "opus_defines.h"
+#include "opus_config.h"
 #include "opus.h"
 
 
@@ -14,9 +13,9 @@
 // Static Opus Encoding Variables --------------------------------------------------------------------------------------
 
 __attribute__ ((aligned (4)))
-static int16_t encode_buffer[OPUS_FRAME_SIZE];
+static float encode_buffer[OPUS_FRAME_SIZE];
 
-static OpusEncoder *opus_encoder;
+static opus_encoder_t opus_encoder;
 static opus_frame_t opus_frames[OPUS_NUM_HISTORICAL_FRAMES], *opus_frame;
 
 
@@ -32,13 +31,8 @@ void opusenc_init(void)
    }
    opus_frame = &opus_frames[0];
 
-   // Initialize the Opus encoder and set its runtime configuration
-   int opus_err = OPUS_OK;
-   opus_encoder = opus_encoder_create(AUDIO_SAMPLE_RATE_HZ, OPUS_INPUT_AUDIO_NUM_CHANNELS, OPUS_APPLICATION_TYPE, &opus_err);
-   opus_encoder_ctl(opus_encoder, OPUS_SET_SIGNAL(OPUS_SIGNAL_TYPE));
-   opus_encoder_ctl(opus_encoder, OPUS_SET_BITRATE(OPUS_ENCODED_BIT_RATE));
-   opus_encoder_ctl(opus_encoder, OPUS_SET_COMPLEXITY(OPUS_COMPLEXITY));
-   opus_encoder_ctl(opus_encoder, OPUS_SET_VBR(1));
+   // Initialize an Opus encoder for the specified runtime configuration
+   opus_encoder_create(&opus_encoder, OPUS_ENCODED_BIT_RATE, OPUS_FRAME_SIZE);
 }
 
 void opusenc_encode(const int16_t* restrict audio_in, const opus_frame_t** restrict result_begin, const opus_frame_t** restrict result_end)
@@ -52,14 +46,15 @@ void opusenc_encode(const int16_t* restrict audio_in, const opus_frame_t** restr
    {
       // Copy enough data to fill the Opus encoding buffer
       const size_t samples_to_copy = MIN(OPUS_FRAME_SIZE - encode_buffer_index, AUDIO_BUFFER_SAMPLES_PER_CHANNEL - i);
-      memcpy(encode_buffer + encode_buffer_index, audio_in + i, sizeof(int16_t) * samples_to_copy);
+      for (size_t sample = 0; sample < samples_to_copy; ++sample)
+         encode_buffer[encode_buffer_index + sample] = audio_in[i + sample];
       encode_buffer_index = (encode_buffer_index + samples_to_copy) % OPUS_FRAME_SIZE;
       i += samples_to_copy;
 
       // If encoding buffer is full, encode the audio data frame
       if (!encode_buffer_index)
       {
-         opus_frame->num_encoded_bytes = (uint16_t)opus_encode(opus_encoder, encode_buffer, OPUS_FRAME_SIZE, opus_frame->encoded_data, sizeof(opus_frame->encoded_data));
+         opus_frame->num_encoded_bytes = (uint16_t)opus_encode(&opus_encoder, encode_buffer, opus_frame->encoded_data, sizeof(opus_frame->encoded_data));
          *result_end = opus_frame = opus_frame->next;
       }
    }
