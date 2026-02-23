@@ -8,6 +8,12 @@ SIZE_OUTPUT := default.size.stdout
 OBJDUMP_LIST := $(BUILD)/$(TARGET).list
 LINKER_FILE := STM32H745ZITX_FLASH.ld
 
+SD_TARGET := SD_$(TARGET)
+SD_EXECUTABLE := $(BUILD)/$(SD_TARGET).elf
+
+TEST_TARGET := Test_$(TARGET)
+TEST_EXECUTABLE := $(BUILD)/$(TEST_TARGET).elf
+
 ifndef BOARD_REV
 $(error You must specify a BOARD_REV (A, B, etc) to continue)
 endif
@@ -23,12 +29,14 @@ MKDIR := mkdir -p
 RM := rm -rf
 FLASH := STM32_Programmer_CLI
 
-DEFINES := -D_DATETIME=$(shell date +%s) -DCORE_CM4 -DUSE_HAL_DRIVER -DSTM32H745xx -DUSE_PWR_LDO_SUPPLY -DUSBD_MAX_POWER=250 -DBOARD_REV=$(BOARD_REV)
+DEFINES := -D_DATETIME=$(shell date +%s) -D_FW_REVISION=$(shell cd .. && git log --pretty=format:'%H' -n 1 | cut -c 1-8) -DCORE_CM4 -DUSE_HAL_DRIVER -DSTM32H745xx -DUSE_PWR_LDO_SUPPLY -DUSBD_MAX_POWER=250 -DBOARD_REV=$(BOARD_REV)
 
 VPATH := ../Common/Src Core/Src Core/Startup ../Drivers/STM32H7xx_HAL_Driver/Src ../Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Src ../Middlewares/ST/STM32_USB_Device_Library/Core/Src
-INCLUDES := -I../Common/Inc -ICore/Inc -I../Drivers/STM32H7xx_HAL_Driver/Inc -I../Drivers/CMSIS/Include -I../Drivers/CMSIS/Device/ST/STM32H7xx/Include -I../Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc -I../Middlewares/ST/STM32_USB_Device_Library/Core/Inc
-SOURCES := $(foreach SOURCE,$(foreach DIR,$(VPATH),$(wildcard $(DIR)/*.c)),$(patsubst %.c,%.c,$(notdir $(SOURCE))))
-OBJECTS := $(SOURCES:%.c=$(BUILD)/%.o) $(BUILD)/startup_stm32h745zitx.o
+INCLUDES := -I../Common/Inc -ICore/Inc -I../Drivers/STM32H7xx_HAL_Driver/Inc -I../Drivers/CMSIS/Include -I../Drivers/CMSIS/Device/ST/STM32H7xx/Include -I../Drivers/CMSIS_DSP/Include -I../Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc -I../Middlewares/ST/STM32_USB_Device_Library/Core/Inc
+SOURCES := $(filter-out main.c, $(foreach SOURCE,$(foreach DIR,$(VPATH),$(wildcard $(DIR)/*.c)),$(patsubst %.c,%.c,$(notdir $(SOURCE)))))
+CMSIS_DSP_SOURCES := arm_copy_q7.c
+VPATH += Testing ../Drivers/CMSIS_DSP/Source/BasicMathFunctions ../Drivers/CMSIS_DSP/Source/ComplexMathFunctions ../Drivers/CMSIS_DSP/Source/CommonTables ../Drivers/CMSIS_DSP/Source/FastMathFunctions ../Drivers/CMSIS_DSP/Source/SupportFunctions ../Drivers/CMSIS_DSP/Source/TransformFunctions
+OBJECTS := $(SOURCES:%.c=$(BUILD)/%.o) $(CMSIS_DSP_SOURCES:%.c=$(BUILD)/%.o) $(BUILD)/startup_stm32h745zitx.o
 
 CFLAGS  = -mcpu=$(CPU) -std=gnu11 $(DEFINES) $(INCLUDES) -ffunction-sections -fdata-sections -Wall -Wno-packed-bitfield-compat
 CFLAGS += -fstack-usage -MMD -MP --specs=nano.specs -mfpu=$(FPU) -mfloat-abi=$(FABI) -mthumb
@@ -44,6 +52,14 @@ all: directories $(EXECUTABLE) secondary-outputs
 debug: CFLAGS += -g3 -DDEBUG -O0
 debug: directories $(EXECUTABLE) secondary-outputs
 
+sd: CFLAGS += -Ofast
+sd: DEFINES += -DPACKET_FULL_AUDIO
+sd: directories $(SD_EXECUTABLE)
+
+test: CFLAGS += -Ofast
+test: DEFINES += -DPERIPHERAL_TESTS
+test: directories $(TEST_EXECUTABLE)
+
 directories: $(BUILD)
 
 $(BUILD):
@@ -51,8 +67,14 @@ $(BUILD):
 	
 secondary-outputs: $(SIZE_OUTPUT) $(OBJDUMP_LIST)
 
-$(EXECUTABLE) $(MAP_FILE): $(OBJECTS)
-	$(CC) -o $@ -T$(LINKER_FILE) $(OBJECTS) $(LFLAGS)
+$(EXECUTABLE) $(MAP_FILE): $(OBJECTS) $(BUILD)/main.o
+	$(CC) -o $@ -T$(LINKER_FILE) $^ $(LFLAGS)
+
+$(SD_EXECUTABLE): $(OBJECTS) $(BUILD)/sdcard.o
+	$(CC) -o $@ -T$(LINKER_FILE) $^ $(LFLAGS)
+
+$(TEST_EXECUTABLE): $(OBJECTS) $(BUILD)/manufacturing.o
+	$(CC) -o $@ -T$(LINKER_FILE) $^ $(LFLAGS)
 
 $(SIZE_OUTPUT): $(EXECUTABLE)
 	$(SIZE) $(EXECUTABLE)
@@ -72,4 +94,10 @@ clean:
 flash: all
 	$(FLASH) -c port=SWD mode=UR -d $(EXECUTABLE) 0x08100000 -v
 
-.PHONY: all directories secondary-outputs clean flash
+flashsd: sd
+	$(FLASH) -c port=SWD mode=UR -d $(SD_EXECUTABLE) 0x08100000 -v
+
+flashtest: test
+	$(FLASH) -c port=SWD mode=UR -d $(TEST_EXECUTABLE) 0x08100000 -v
+
+.PHONY: all debug sd test directories secondary-outputs clean flash flashsd flashtest

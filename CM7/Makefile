@@ -8,6 +8,12 @@ SIZE_OUTPUT := default.size.stdout
 OBJDUMP_LIST := $(BUILD)/$(TARGET).list
 LINKER_FILE := STM32H745ZITX_FLASH.ld
 
+SD_TARGET := SD_$(TARGET)
+SD_EXECUTABLE := $(BUILD)/$(SD_TARGET).elf
+
+TEST_TARGET := Test_$(TARGET)
+TEST_EXECUTABLE := $(BUILD)/$(TEST_TARGET).elf
+
 ifndef BOARD_REV
 $(error You must specify a BOARD_REV (A, B, etc) to continue)
 endif
@@ -27,9 +33,9 @@ DEFINES := -DCORE_CM7 -DUSE_HAL_DRIVER -DSTM32H745xx -DUSE_PWR_LDO_SUPPLY -DBOAR
 
 VPATH := ../Common/Src Core/Src Core/Startup ../Drivers/STM32H7xx_HAL_Driver/Src
 INCLUDES := -I../Common/Inc -ICore/Inc -I../Drivers/STM32H7xx_HAL_Driver/Inc -I../Drivers/CMSIS/Include -I../Drivers/CMSIS/Device/ST/STM32H7xx/Include -I../Drivers/CMSIS_DSP/Include
-SOURCES := $(foreach SOURCE,$(foreach DIR,$(VPATH),$(wildcard $(DIR)/*.c)),$(patsubst %.c,%.c,$(notdir $(SOURCE))))
+SOURCES := $(filter-out main.c, $(foreach SOURCE,$(foreach DIR,$(VPATH),$(wildcard $(DIR)/*.c)),$(patsubst %.c,%.c,$(notdir $(SOURCE)))))
 CMSIS_DSP_SOURCES := arm_common_tables.c arm_const_structs.c arm_mult_f32.c arm_cmplx_mag_f32.c arm_copy_f32.c arm_cos_f32.c arm_q15_to_float.c arm_cfft_f32.c arm_cfft_init_f32.c arm_rfft_fast_f32.c arm_rfft_fast_init_f32.c arm_cfft_radix8_f32.c arm_bitreversal2.c
-VPATH += ../Drivers/CMSIS_DSP/Source/BasicMathFunctions ../Drivers/CMSIS_DSP/Source/ComplexMathFunctions ../Drivers/CMSIS_DSP/Source/CommonTables ../Drivers/CMSIS_DSP/Source/FastMathFunctions ../Drivers/CMSIS_DSP/Source/SupportFunctions ../Drivers/CMSIS_DSP/Source/TransformFunctions
+VPATH += Testing ../Drivers/CMSIS_DSP/Source/BasicMathFunctions ../Drivers/CMSIS_DSP/Source/ComplexMathFunctions ../Drivers/CMSIS_DSP/Source/CommonTables ../Drivers/CMSIS_DSP/Source/FastMathFunctions ../Drivers/CMSIS_DSP/Source/SupportFunctions ../Drivers/CMSIS_DSP/Source/TransformFunctions
 OBJECTS := $(SOURCES:%.c=$(BUILD)/%.o) $(CMSIS_DSP_SOURCES:%.c=$(BUILD)/%.o) $(BUILD)/startup_stm32h745zitx.o
 
 CFLAGS  = -mcpu=$(CPU) -std=gnu11 $(DEFINES) $(INCLUDES) -ffunction-sections -fdata-sections -Wall -fstack-usage -MMD -MP
@@ -46,6 +52,14 @@ all: directories $(EXECUTABLE) secondary-outputs
 debug: CFLAGS += -g3 -DDEBUG -O0
 debug: directories $(EXECUTABLE) secondary-outputs
 
+sd: CFLAGS += -Ofast
+sd: DEFINES += -DPACKET_FULL_AUDIO
+sd: directories $(SD_EXECUTABLE)
+
+test: CFLAGS += -Ofast
+test: DEFINES += -DPERIPHERAL_TESTS
+test: directories $(TEST_EXECUTABLE)
+
 directories: $(BUILD)
 
 $(BUILD):
@@ -53,8 +67,14 @@ $(BUILD):
 	
 secondary-outputs: $(SIZE_OUTPUT) $(OBJDUMP_LIST)
 
-$(EXECUTABLE) $(MAP_FILE): $(OBJECTS)
-	$(CC) -o $@ -T$(LINKER_FILE) $(OBJECTS) $(LFLAGS)
+$(EXECUTABLE) $(MAP_FILE): $(OBJECTS) $(BUILD)/main.o
+	$(CC) -o $@ -T$(LINKER_FILE) $^ $(LFLAGS)
+
+$(SD_EXECUTABLE): $(OBJECTS) $(BUILD)/sdcard.o
+	$(CC) -o $@ -T$(LINKER_FILE) $^ $(LFLAGS)
+
+$(TEST_EXECUTABLE): $(OBJECTS) $(BUILD)/manufacturing.o
+	$(CC) -o $@ -T$(LINKER_FILE) $^ $(LFLAGS)
 
 $(SIZE_OUTPUT): $(EXECUTABLE)
 	$(SIZE) $(EXECUTABLE)
@@ -74,4 +94,10 @@ clean:
 flash: all
 	$(FLASH) -c port=SWD mode=UR -d $(EXECUTABLE) 0x08000000 -v
 
-.PHONY: all directories secondary-outputs clean flash
+flashsd: sd
+	$(FLASH) -c port=SWD mode=UR -d $(SD_EXECUTABLE) 0x08000000 -v
+
+flashtest: test
+	$(FLASH) -c port=SWD mode=UR -d $(TEST_EXECUTABLE) 0x08000000 -v
+
+.PHONY: all debug sd test directories secondary-outputs clean flash flashsd flashtest
