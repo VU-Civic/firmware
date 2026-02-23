@@ -49,6 +49,9 @@ int main(void)
    HAL_Delay(1600);
    cell_power_on();
 
+   // Read all non-volatile configuration settings
+   chip_read_config();
+
    // Initialize user peripherals
    usb_init();
    audio_init();

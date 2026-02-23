@@ -49,6 +49,9 @@ int main(void)
    HAL_Delay(1600);
    cell_power_on();
 
+   // Read all non-volatile configuration settings
+   chip_read_config();
+
    // Initialize user peripherals
    usb_init();
    audio_init();
@@ -61,12 +64,8 @@ int main(void)
    // Start user peripherals
    imu_start();
    ai_comms_start();
+   audio_start();
    cpu_init();
-
-   // TODO: DELETE THIS AFTER DONE
-   SET_BIT(CoreDebug->DEMCR, CoreDebug_DEMCR_TRCENA_Msk);
-   WRITE_REG(DWT->CYCCNT, 0);
-   SET_BIT(DWT->CTRL, DWT_CTRL_CYCCNTENA_Msk);
 
    // Loop forever
    while (1)

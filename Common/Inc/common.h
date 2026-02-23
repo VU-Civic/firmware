@@ -17,6 +17,7 @@
 
 #define FIRMWARE_BUILD_TIMESTAMP             _DATETIME
 #define FIRMWARE_REVISION                    STRINGIZE(_FW_REVISION)
+#define FIRMWARE_VERSION_LENGTH              8
 
 #define AUDIO_NUM_CHANNELS                   4
 #define AUDIO_SAMPLE_RATE_HZ                 48000
@@ -55,7 +56,7 @@
 #define OPUS_MS_PER_FRAME                    20
 #define OPUS_HISTORY_MS                      960
 
-#define MIN_MS_BETWEEN_ONSETS                20
+#define MIN_MS_BETWEEN_ONSETS                50
 #define MAX_NUM_ONSETS                       (2 + (1000 / MIN_MS_BETWEEN_ONSETS))
 
 #define AI_FIRMWARE_VERSION_LENGTH           8
@@ -81,6 +82,16 @@
   #define MAX(a, b)                          (((a) > (b)) ? (a) : (b))
 #endif
 
+#define DEFAULT_CONFIG_INITIALIZATION_TAG                         85
+#define DEFAULT_DEVICE_STATUS_UPDATE_INTERVAL_MINUTES             15
+#define DEFAULT_SD_STORAGE_AUDIO_CLIP_MIN_SECONDS                 3
+#define DEFAULT_SD_STORAGE_PROBABILITY_THRESHOLD                  20
+#define DEFAULT_MIN_SHOT_ALERT_PROBABILITY                        20
+#define DEFAULT_GOOD_SHOT_ALERT_PROBABILITY                       60
+#define DEFAULT_MQTT_DEVICE_INFO_QOS                              0
+#define DEFAULT_MQTT_ALERT_QOS                                    1
+#define DEFAULT_MQTT_AUDIO_CLIP_QOS                               0
+
 #define DMA_STREAM0_4_INDEX                  0U
 #define DMA_STREAM1_5_INDEX                  6U
 #define DMA_STREAM2_6_INDEX                  16U
@@ -102,10 +113,14 @@ typedef struct
    volatile uint32_t IFCR;
 } bdma_int_registers_t;
 
-typedef struct __attribute__ ((__packed__, aligned (32)))
+typedef struct __attribute__ ((__packed__))
 {
+   uint8_t initialized_tag;
    uint8_t mqtt_device_info_qos, mqtt_alert_qos, mqtt_audio_qos;
-} non_volatile_data_t;
+   uint8_t shot_detection_min_threshold, shot_detection_good_threshold;
+   uint8_t storage_classification_threshold, audio_clip_length_seconds;
+   uint8_t device_status_transmission_interval_minutes;
+} config_data_t;
 
 typedef struct __attribute__ ((__packed__))
 {
@@ -140,12 +155,14 @@ typedef struct __attribute__ ((__packed__, aligned (16)))
 
 typedef struct __attribute__ ((__packed__, aligned (4)))
 {
+   char device_id[CELL_IMEI_LENGTH+1], imsi[CELL_IMSI_LENGTH+1];
+   uint8_t firmware_version[FIRMWARE_VERSION_LENGTH];
+   uint8_t ai_firmware_version[AI_FIRMWARE_VERSION_LENGTH];
    double timestamp;
    float lat, lon, ht;
    int32_t q1, q2, q3;
-   uint32_t firmware_date;
-   uint8_t chip_temperature_alert;
    uint8_t signal_power, signal_quality;
+   config_data_t device_config;
 } device_info_t;
 
 typedef struct __attribute__ ((__packed__))
@@ -157,10 +174,9 @@ typedef struct __attribute__ ((__packed__))
 
 typedef struct __attribute__ ((__packed__, aligned (4)))
 {
-   uint8_t num_events, cell_signal_power;
-   uint8_t cell_signal_quality, sensor_temperature_alert;
    int32_t sensor_q1, sensor_q2, sensor_q3;
    float sensor_lat, sensor_lon, sensor_ht;
+   uint8_t num_events, cell_signal_power, cell_signal_quality;
    char device_id[CELL_IMEI_LENGTH+1];
    event_info_t events[MAX_NUM_EVENTS_PER_ALERT];
 } alert_message_t;
@@ -182,7 +198,6 @@ typedef enum
 
 // Shared Application Variables for Both Cores -------------------------------------------------------------------------
 
-extern non_volatile_data_t non_volatile_data;
 extern volatile data_packet_container_t data;
 
 

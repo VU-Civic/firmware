@@ -277,6 +277,7 @@ void ai_process_detections(void)
    // Process any new AI event detections
    if (ai_result)
    {
+      memcpy((uint8_t*)&device_info.ai_firmware_version, (uint8_t*)ai_result->ai_firmware_version, AI_FIRMWARE_VERSION_LENGTH);
       ai_result = NULL;
    }
 }

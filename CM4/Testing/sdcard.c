@@ -12,6 +12,13 @@
 #include "usb.h"
 
 
+// SD Card Application Defaults ----------------------------------------------------------------------------------------
+
+#define DEVICE_STATUS_UPDATE_INTERVAL_MINUTES                  5
+#define STORAGE_AUDIO_CLIP_MIN_SECONDS                         60
+#define STORAGE_PROBABILITY_THRESHOLD                          0
+
+
 // Main Application Function -------------------------------------------------------------------------------------------
 
 int main(void)
@@ -48,6 +55,12 @@ int main(void)
    // Wait for at least 1.5s before powering on the cellular modem
    HAL_Delay(1600);
    cell_power_on();
+
+   // Override device configuration settings with the desired application values
+   chip_read_config();
+   device_info.device_config.audio_clip_length_seconds = STORAGE_AUDIO_CLIP_MIN_SECONDS;
+   device_info.device_config.device_status_transmission_interval_minutes = DEVICE_STATUS_UPDATE_INTERVAL_MINUTES;
+   device_info.device_config.storage_classification_threshold = STORAGE_PROBABILITY_THRESHOLD;
 
    // Initialize user peripherals
    usb_init();

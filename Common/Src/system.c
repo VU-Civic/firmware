@@ -8,8 +8,8 @@
 
 // Shared Application Variables for Both Cores -------------------------------------------------------------------------
 
-__attribute__ ((section (".user_nvm")))
-non_volatile_data_t non_volatile_data;
+__attribute__ ((section (".user_nvm"), aligned (32)))
+config_data_t config_data;
 
 __attribute__ ((section (".data_packet")))
 volatile data_packet_container_t data;
@@ -18,7 +18,7 @@ volatile data_packet_container_t data;
 // Shared Application Variables for Core CM4 ---------------------------------------------------------------------------
 
 #ifdef CORE_CM4
-volatile device_info_t device_info = { .firmware_date = FIRMWARE_BUILD_TIMESTAMP };
+volatile device_info_t device_info = { .firmware_version = FIRMWARE_REVISION };
 #endif
 
 
@@ -99,19 +99,42 @@ void chip_reset(void)
    NVIC_SystemReset();
 }
 
-non_volatile_data_t chip_read_non_volatile(void)
+void chip_read_config(void)
 {
+#ifdef CORE_CM4
+
    // Ensure that the data being read represents the most currently stored data
-   non_volatile_data_t nvm_data = non_volatile_data;
+   device_info.device_config = config_data;
    __DSB();
-   return nvm_data;
+
+   // Check if the default device configuration has never been initialized
+   if (device_info.device_config.initialized_tag != DEFAULT_CONFIG_INITIALIZATION_TAG)
+   {
+      // Set default configuration values
+      device_info.device_config.initialized_tag = DEFAULT_CONFIG_INITIALIZATION_TAG;
+      device_info.device_config.mqtt_device_info_qos = DEFAULT_MQTT_DEVICE_INFO_QOS;
+      device_info.device_config.mqtt_alert_qos = DEFAULT_MQTT_ALERT_QOS;
+      device_info.device_config.mqtt_audio_qos = DEFAULT_MQTT_AUDIO_CLIP_QOS;
+      device_info.device_config.shot_detection_min_threshold = DEFAULT_MIN_SHOT_ALERT_PROBABILITY;
+      device_info.device_config.shot_detection_good_threshold = DEFAULT_GOOD_SHOT_ALERT_PROBABILITY;
+      device_info.device_config.storage_classification_threshold = DEFAULT_SD_STORAGE_PROBABILITY_THRESHOLD;
+      device_info.device_config.audio_clip_length_seconds = DEFAULT_SD_STORAGE_AUDIO_CLIP_MIN_SECONDS;
+      device_info.device_config.device_status_transmission_interval_minutes = DEFAULT_DEVICE_STATUS_UPDATE_INTERVAL_MINUTES;
+
+      // Store default configuration to non-volatile memory
+      chip_save_config();
+   }
+
+#endif
 }
 
-void chip_save_non_volatile(const non_volatile_data_t *nvm_data)
+void chip_save_config(void)
 {
+#ifdef CORE_CM4
+
    // TODO: TEST THIS
    // Determine which flash sector the user memory lies in
-   uint32_t sector, flash_address = (uint32_t)&non_volatile_data;
+   uint32_t sector, flash_address = (uint32_t)&config_data;
    if ((flash_address < 0x08120000) && (flash_address >= 0x08100000))
       sector = FLASH_SECTOR_0;
    else if ((flash_address < 0x08140000) && (flash_address >= 0x08120000))
@@ -151,8 +174,9 @@ void chip_save_non_volatile(const non_volatile_data_t *nvm_data)
    CLEAR_BIT(FLASH->CR2, (FLASH_CR_SER | FLASH_CR_SNB));
 
    // Program the user flash sector word by word and re-lock the flash
-   volatile uint32_t *src_addr = (volatile uint32_t*)nvm_data;
-   volatile uint32_t *const end_addr = src_addr + sizeof(non_volatile_data_t);
+   volatile config_data_t config = device_info.device_config;
+   volatile uint32_t *src_addr = (volatile uint32_t*)&config;
+   volatile uint32_t *const end_addr = src_addr + sizeof(config_data_t);
    while (src_addr < end_addr)
    {
       volatile uint32_t *dest_addr = (volatile uint32_t*)flash_address;
@@ -173,6 +197,8 @@ void chip_save_non_volatile(const non_volatile_data_t *nvm_data)
       flash_address += 32;
    }
    SET_BIT(FLASH->CR2, FLASH_CR_LOCK);
+
+#endif
 }
 
 void chip_initialize_unused_pins(void)
@@ -248,6 +274,11 @@ void cpu_init(void)
 
    // Disable SysTick interrupts
    CLEAR_BIT(SysTick->CTRL, SysTick_CTRL_TICKINT_Msk);
+
+   // Enable the DWT cycle counter to use for timeouts
+   SET_BIT(CoreDebug->DEMCR, CoreDebug_DEMCR_TRCENA_Msk);
+   WRITE_REG(DWT->CYCCNT, 0);
+   SET_BIT(DWT->CTRL, DWT_CTRL_CYCCNTENA_Msk);
 
    // Enable an independent watchdog that resets if not fed within 1 second
    SET_BIT(DBGMCU->APB4FZ2, DBGMCU_APB4FZ2_DBG_IWDG2);
