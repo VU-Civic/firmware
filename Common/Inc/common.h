@@ -12,7 +12,11 @@
 
 // Custom Application Definitions --------------------------------------------------------------------------------------
 
+#define STRINGIZE_HELPER(x)                  #x
+#define STRINGIZE(x)                         STRINGIZE_HELPER(x)
+
 #define FIRMWARE_BUILD_TIMESTAMP             _DATETIME
+#define FIRMWARE_REVISION                    STRINGIZE(_FW_REVISION)
 
 #define AUDIO_NUM_CHANNELS                   4
 #define AUDIO_SAMPLE_RATE_HZ                 48000
@@ -24,6 +28,7 @@
 #define CELL_CONNECTION_TIMEOUT_SECONDS      65520
 #define CELL_SERVER_RESPONSE_TIMEOUT_SECONDS 5
 #define CELL_IMEI_LENGTH                     15
+#define CELL_IMSI_LENGTH                     15
 #define CELL_MQTT_BROKER_APN                 tsudp
 #define CELL_MQTT_BROKER_IP                  10.7.0.55
 #define CELL_MQTT_BROKER_PORT                2442
@@ -43,7 +48,7 @@
 #define USB_VID                              4617
 #define USB_PID                              2829
 #define USB_PRODUCT_STRING                   "CivicAlert"
-#define USB_MANUFACTURER_STRING              "HedgeTech"
+#define USB_MANUFACTURER_STRING              "CivicAlert"
 
 #define OPUS_FRAME_DELIMITER                 0xAA
 #define OPUS_ENCODED_BIT_RATE                15000
@@ -53,6 +58,7 @@
 #define MIN_MS_BETWEEN_ONSETS                20
 #define MAX_NUM_ONSETS                       (2 + (1000 / MIN_MS_BETWEEN_ONSETS))
 
+#define AI_FIRMWARE_VERSION_LENGTH           8
 #define AI_NUM_CLASSES                       2
 
 #define MAX_NUM_EVENTS_PER_ALERT             AUDIO_NUM_DMAS_PER_CLIP
@@ -101,6 +107,18 @@ typedef struct __attribute__ ((__packed__, aligned (32)))
    uint8_t mqtt_device_info_qos, mqtt_alert_qos, mqtt_audio_qos;
 } non_volatile_data_t;
 
+typedef struct __attribute__ ((__packed__))
+{
+   uint8_t storage_classification_threshold;
+   uint8_t audio_clip_length_seconds;
+} ai_config_t;
+
+typedef struct __attribute__ ((__packed__))
+{
+   uint8_t ai_firmware_version[AI_FIRMWARE_VERSION_LENGTH];
+   uint8_t class_probabilities[AI_NUM_CLASSES];
+} ai_result_t;
+
 typedef struct __attribute__ ((__packed__, aligned (16)))
 {
    uint8_t start_delimiter[4];
@@ -108,7 +126,9 @@ typedef struct __attribute__ ((__packed__, aligned (16)))
    double timestamp;
    float lat, lon, ht;
    int32_t q1, q2, q3;
-   uint8_t reserved[8];
+   char imei[CELL_IMEI_LENGTH+1], imsi[CELL_IMSI_LENGTH+1];
+   ai_config_t ai_config;
+   uint8_t reserved[6];
    uint8_t end_delimiter[4];
 } data_packet_t;
 
@@ -127,12 +147,6 @@ typedef struct __attribute__ ((__packed__, aligned (4)))
    uint8_t chip_temperature_alert;
    uint8_t signal_power, signal_quality;
 } device_info_t;
-
-typedef struct __attribute__ ((__packed__))
-{
-   uint32_t ai_firmware_version;
-   uint8_t class_probabilities[AI_NUM_CLASSES];
-} ai_result_t;
 
 typedef struct __attribute__ ((__packed__))
 {
