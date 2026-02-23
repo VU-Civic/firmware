@@ -82,7 +82,7 @@ SECTIONS
   } >RAM_D1
   
   /* Flash area for user non-volatile storage */
-  .user_nvm :
+  .user_nvm (NOLOAD) :
   {
     . = ALIGN(4);
     KEEP (*(.user_nvm))

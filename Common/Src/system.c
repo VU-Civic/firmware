@@ -9,7 +9,7 @@
 // Shared Application Variables for Both Cores -------------------------------------------------------------------------
 
 __attribute__ ((section (".user_nvm"), aligned (32)))
-config_data_t config_data;
+union { config_data_t config_data; uint32_t reserved[FLASH_NB_32BITWORD_IN_FLASHWORD]; } config_data = { 0 };
 
 __attribute__ ((section (".data_packet")))
 volatile data_packet_container_t data;
@@ -104,7 +104,7 @@ void chip_read_config(void)
 #ifdef CORE_CM4
 
    // Ensure that the data being read represents the most currently stored data
-   device_info.device_config = config_data;
+   device_info.device_config = config_data.config_data;
    __DSB();
 
    // Check if the default device configuration has never been initialized
@@ -132,7 +132,6 @@ void chip_save_config(void)
 {
 #ifdef CORE_CM4
 
-   // TODO: TEST THIS
    // Determine which flash sector the user memory lies in
    uint32_t sector, flash_address = (uint32_t)&config_data;
    if ((flash_address < 0x08120000) && (flash_address >= 0x08100000))
@@ -153,12 +152,11 @@ void chip_save_config(void)
       sector = FLASH_SECTOR_7;
 
    // Unlock the flash memory bank and clear any pending interrupts
-   // TODO: DO I NEED TO UNLOCK BANK 1???
-   /*if (READ_BIT(FLASH->CR1, FLASH_CR_LOCK))
+   if (READ_BIT(FLASH->CR1, FLASH_CR_LOCK))
    {
       WRITE_REG(FLASH->KEYR1, FLASH_KEY1);
       WRITE_REG(FLASH->KEYR1, FLASH_KEY2);
-   }*/
+   }
    if (READ_BIT(FLASH->CR2, FLASH_CR_LOCK))
    {
       WRITE_REG(FLASH->KEYR2, FLASH_KEY1);
@@ -174,9 +172,10 @@ void chip_save_config(void)
    CLEAR_BIT(FLASH->CR2, (FLASH_CR_SER | FLASH_CR_SNB));
 
    // Program the user flash sector word by word and re-lock the flash
-   volatile config_data_t config = device_info.device_config;
+   union { config_data_t config_data; uint32_t reserved[FLASH_NB_32BITWORD_IN_FLASHWORD]; } config __attribute__((aligned(4))) = { 0 };
+   config.config_data = device_info.device_config;
    volatile uint32_t *src_addr = (volatile uint32_t*)&config;
-   volatile uint32_t *const end_addr = src_addr + sizeof(config_data_t);
+   volatile uint32_t *const end_addr = src_addr + (sizeof(config_data_t) / sizeof(uint32_t));
    while (src_addr < end_addr)
    {
       volatile uint32_t *dest_addr = (volatile uint32_t*)flash_address;
@@ -197,6 +196,7 @@ void chip_save_config(void)
       flash_address += 32;
    }
    SET_BIT(FLASH->CR2, FLASH_CR_LOCK);
+   SET_BIT(FLASH->CR1, FLASH_CR_LOCK);
 
 #endif
 }
