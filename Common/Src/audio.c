@@ -4,6 +4,7 @@
 
 #include "audio.h"
 #include "onset_detection.h"
+#include "system.h"
 
 
 // PDM-to-TDM Converter Chip Register Definitions ----------------------------------------------------------------------
@@ -207,9 +208,10 @@ void audio_init(void)
    CLEAR_BIT(RCC->CR, RCC_CR_PLL2ON);
    while (__HAL_RCC_GET_FLAG(RCC_FLAG_PLL2RDY) != 0U);
    __HAL_RCC_PLL2_CONFIG(21, 289, 14, 14, 14);
-   __HAL_RCC_PLL2_VCIRANGE(RCC_PLL2VCIRANGE_0) ;
-   __HAL_RCC_PLL2_VCORANGE(RCC_PLL2VCOMEDIUM) ;
+   __HAL_RCC_PLL2_VCIRANGE(RCC_PLL2VCIRANGE_0);
+   __HAL_RCC_PLL2_VCORANGE(RCC_PLL2VCOMEDIUM);
    CLEAR_BIT(RCC->PLLCFGR, RCC_PLLCFGR_PLL2FRACEN);
+   (void)READ_BIT(RCC->PLLCFGR, RCC_PLLCFGR_PLL2FRACEN);
    __HAL_RCC_PLL2FRACN_CONFIG(113);
    SET_BIT(RCC->PLLCFGR, RCC_PLLCFGR_PLL2FRACEN);
    __HAL_RCC_PLL2CLKOUT_ENABLE(RCC_PLL2_DIVP);
@@ -333,10 +335,10 @@ void audio_init(void)
    WRITE_REG(SAI2->GCR, 0);
    MODIFY_REG(SAI2_Block_B->CR1,
               (SAI_xCR1_MODE | SAI_xCR1_PRTCFG |  SAI_xCR1_DS | SAI_xCR1_LSBFIRST | SAI_xCR1_CKSTR | SAI_xCR1_SYNCEN | SAI_xCR1_MONO | SAI_xCR1_OUTDRIV | SAI_xCR1_DMAEN | SAI_xCR1_NODIV | SAI_xCR1_MCKDIV | SAI_xCR1_OSR | ((HAL_GetREVID() >= REV_ID_B) ? SAI_xCR1_MCKEN : 0)),
-              (SAI_MODEMASTER_RX | SAI_DATASIZE_16 | (mckdiv << 20)));
+              (SAI_MODEMASTER_RX | SAI_DATASIZE_16 | (mckdiv << SAI_xCR1_MCKDIV_Pos)));
    MODIFY_REG(SAI2_Block_B->CR2, (SAI_xCR2_FTH | SAI_xCR2_FFLUSH | SAI_xCR2_COMP | SAI_xCR2_CPL), SAI_FIFOTHRESHOLD_FULL);
    MODIFY_REG(SAI2_Block_B->FRCR, (SAI_xFRCR_FRL | SAI_xFRCR_FSALL | SAI_xFRCR_FSDEF | SAI_xFRCR_FSPOL | SAI_xFRCR_FSOFF), ((64 - 1U) | SAI_FS_BEFOREFIRSTBIT | SAI_FS_ACTIVE_HIGH));
-   MODIFY_REG(SAI2_Block_B->SLOTR, (SAI_xSLOTR_FBOFF | SAI_xSLOTR_SLOTSZ | SAI_xSLOTR_NBSLOT | SAI_xSLOTR_SLOTEN), (0xFFFF0000 | ((4 - 1U) << 8)));
+   MODIFY_REG(SAI2_Block_B->SLOTR, (SAI_xSLOTR_FBOFF | SAI_xSLOTR_SLOTSZ | SAI_xSLOTR_NBSLOT), (SAI_xSLOTR_SLOTEN | ((AUDIO_NUM_CHANNELS - 1U) << SAI_xSLOTR_NBSLOT_Pos)));
 
    // Set up the MDMA Channel 0 (audio reordering) peripheral
    CLEAR_BIT(MDMA_Channel0->CCR, MDMA_CCR_EN);
@@ -506,12 +508,13 @@ void audio_start(void)
 #include "cellular.h"
 #include "gps.h"
 #include "imu.h"
+#include "system.h"
 #include "usb.h"
 
 
 // Static Audio Variables ----------------------------------------------------------------------------------------------
 
-static volatile uint8_t new_audio_received;
+static volatile uint8_t new_audio_received, poll_gps_signal_strength;
 
 
 // Interrupt Service Routines ------------------------------------------------------------------------------------------
@@ -555,8 +558,11 @@ void audio_init(void)
       data.packets[0].start_delimiter[i] = data.packets[1].start_delimiter[i] = packet_start_delimiter[i];
    for (int i = 0; i < sizeof(packet_end_delimiter); ++i)
       data.packets[0].end_delimiter[i] = data.packets[1].end_delimiter[i] = packet_end_delimiter[i];
-   new_audio_received = 0;
+   new_audio_received = poll_gps_signal_strength = 0;
+}
 
+void audio_start(void)
+{
    // Enable data transfer completion interrupts
    NVIC_SetPriority(MDMA_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 0, 0));
    NVIC_EnableIRQ(MDMA_IRQn);
@@ -595,6 +601,13 @@ void audio_process_new_data(cell_audio_transmit_command_t transmit_evidence)
       if (transmit_evidence != CELL_AUDIO_NO_TRANSMIT)
          for (const opus_frame_t *frame = result_begin; frame != result_end; frame = frame->next)
             cell_transmit_audio(frame, (transmit_evidence == CELL_AUDIO_TRANSMIT_END) && (frame->next == result_end));
+
+      // Poll for GPS signal strength if requested
+      if (poll_gps_signal_strength)
+      {
+         poll_gps_signal_strength = 0;
+         gps_poll_signal_data();
+      }
    }
 }
 

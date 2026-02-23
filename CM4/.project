@@ -164,5 +164,10 @@
 			<type>1</type>
 			<locationURI>PARENT-1-PROJECT_LOC/Middlewares/ST/STM32_USB_Device_Library/Core/Src/usbd_ioreq.c</locationURI>
 		</link>
+		<link>
+			<name>Drivers/CMSIS_DSP/Source/SupportFunctions/arm_copy_q7.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/SupportFunctions/arm_copy_q7.c</locationURI>
+		</link>
 	</linkedResources>
 </projectDescription>

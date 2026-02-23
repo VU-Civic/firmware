@@ -61,6 +61,7 @@ int main(void)
    // Start user peripherals
    imu_start();
    ai_comms_start();
+   audio_start();
    cpu_init();
 
    // Loop forever
