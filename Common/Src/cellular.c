@@ -22,7 +22,7 @@
 
 #define CELL_TIMER_MS_PER_TICK            2U
 #define CELL_TIMER_20MS_COUNT             6U
-#define CELL_TIMER_5MIN_COUNT             61440U
+#define CELL_TIMER_1MIN_COUNT             256U
 
 #define CELL_MODEM_STATUS_BOOT_TIME_MS    16000
 #define CELL_MODEM_DEFAULT_BAUD_RATE      115200
@@ -36,6 +36,7 @@
 #define SIM_CARD_ID_MIN_LENGTH            18
 #define SIM_CARD_ID_MAX_LENGTH            22
 #define UMQTTSN_ERROR_CLASS_CODE          14
+#define MQTTSN_PUBLISH_MSG_QOS_OFFSET     14
 
 #define CELL_GREETING_MSG                 "+UUSTATUS: READY\r"
 #define CELL_ACK_MSG                      "OK\r"
@@ -100,7 +101,7 @@
 #define CELL_SET_MQTTSN_AUTO_PING_MSG     "AT+UMQTTSNC=10,1\r"
 #define CELL_MQTTSN_CONNECT_MSG           "AT+UMQTTSNC=1\r"
 #define CELL_MQTTSN_REGISTER_MSG          "AT+UMQTTSNC=2,"
-#define CELL_MQTTSN_PUBLISH_INFO_MSG      "AT+UMQTTSNC=4,1,0,1,1,\"" STRINGIZE(CELL_MQTT_DEVICES_TOPIC) "\",\""
+#define CELL_MQTTSN_PUBLISH_INFO_MSG      "AT+UMQTTSNC=4,0,0,1,1,\"" STRINGIZE(CELL_MQTT_DEVICES_TOPIC) "\",\""
 #define CELL_MQTTSN_PUBLISH_ALERT_MSG     "AT+UMQTTSNC=4,1,0,1,1,\"" STRINGIZE(CELL_MQTT_ALERT_TOPIC) "\",\""
 #define CELL_MQTTSN_PUBLISH_AUDIO_MSG     "AT+UMQTTSNC=4,0,0,0,1,\"" STRINGIZE(CELL_MQTT_EVIDENCE_TOPIC) "\",\""
 #define CELL_MQTTSN_PUB_BINARY_INFO_MSG   "AT+UMQTTSNC=12,1,0,1,\"" STRINGIZE(CELL_MQTT_DEVICES_TOPIC) "\","
@@ -162,7 +163,7 @@ static volatile uint8_t mqtt_result = 0, pending_messages = 0, connectivity_chan
 static volatile uint8_t cell_modem_available = 0, configure_modem = 0, mqtt_connected = 0, signal_quality = 255;
 static volatile uint8_t valid_cgreg = 0, valid_cereg = 0, valid_pdp = 0, temperature_alert = 0, reading_imsi = 0;
 static volatile uint8_t cell_busy = 0, device_info_update = 0, mqtt_configured = 0, mqtt_subscribed = 0, prompt_received = 0;
-static volatile uint8_t command_acked = 0, command_nacked = 0, timed_out = 0, in_holdoff_period = 0;
+static volatile uint8_t command_acked = 0, command_nacked = 0, timed_out = 0, in_holdoff_period = 0, device_update_timer_count = 0;
 static volatile char sim_id[SIM_CARD_ID_MAX_LENGTH+1], *incoming_message = 0;
 static volatile uint32_t baud_rate = 0, cme_error = 0;
 
@@ -403,6 +404,7 @@ static uint8_t cell_mqtt_publish_device_info(void)
 {
    // Set up the publish transfer buffer
    arm_copy_q7((q7_t*)CELL_MQTTSN_PUBLISH_INFO_MSG, (q7_t*)publish_message_buffer, sizeof(CELL_MQTTSN_PUBLISH_INFO_MSG));
+   publish_message_buffer[MQTTSN_PUBLISH_MSG_QOS_OFFSET] = (device_info.device_config.mqtt_device_info_qos > 0) ? '1' : '0';
    const uint32_t message_len = 2 + sizeof(CELL_MQTTSN_PUBLISH_INFO_MSG) + hex_encode_binary_data(publish_message_buffer + sizeof(CELL_MQTTSN_PUBLISH_INFO_MSG) - 1, (const uint8_t*)&device_info, sizeof(device_info_t));
    arm_copy_q7((q7_t*)"\"\r", (q7_t*)publish_message_buffer + message_len - 3, 2);
 
@@ -418,6 +420,7 @@ static uint8_t cell_mqtt_publish_alert(const alert_message_t *alert)
 {
    // Set up the publish transfer buffer
    arm_copy_q7((q7_t*)CELL_MQTTSN_PUBLISH_ALERT_MSG, (q7_t*)publish_message_buffer, sizeof(CELL_MQTTSN_PUBLISH_ALERT_MSG));
+   publish_message_buffer[MQTTSN_PUBLISH_MSG_QOS_OFFSET] = (device_info.device_config.mqtt_alert_qos > 0) ? '1' : '0';
    const uint32_t message_len = 2 + sizeof(CELL_MQTTSN_PUBLISH_ALERT_MSG) + hex_encode_binary_data(publish_message_buffer + sizeof(CELL_MQTTSN_PUBLISH_ALERT_MSG) - 1, (const uint8_t*)alert, sizeof(alert_message_t));
    arm_copy_q7((q7_t*)"\"\r", (q7_t*)publish_message_buffer + message_len - 3, 2);
 
@@ -433,6 +436,7 @@ static uint8_t cell_mqtt_publish_audio(const evidence_message_t *evidence_messag
 {
    // Set up the publish transfer buffer
    arm_copy_q7((q7_t*)CELL_MQTTSN_PUBLISH_AUDIO_MSG, (q7_t*)publish_message_buffer, sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG));
+   publish_message_buffer[MQTTSN_PUBLISH_MSG_QOS_OFFSET] = (device_info.device_config.mqtt_audio_qos > 0) ? '1' : '0';
    const uint32_t message_len = 2 + sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG) + base64_encode_binary_data(publish_message_buffer + sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG) - 1, (const uint8_t*)evidence_message, offsetof(evidence_message_t, data) + evidence_message_length);
    arm_copy_q7((q7_t*)"\"\r", (q7_t*)publish_message_buffer + message_len - 3, 2);
 
@@ -492,6 +496,7 @@ static uint8_t cell_configure_modem(void)
    // Always poll for the device IMEI to use as the device ID
    while ((data.packets[0].imei[0] == 0) && (data.packets[0].imei[1] == 0) && (data.packets[0].imei[2] == 0))
       for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_RETRIEVE_IMEI_MSG, sizeof(CELL_RETRIEVE_IMEI_MSG), 1000); ++retries);
+   memcpy((char*)device_info.device_id, (char*)data.packets[0].imei, CELL_IMEI_LENGTH);
 
    // Continue configuring modem if the SIM was validated
    if (sim_present)
@@ -554,6 +559,31 @@ static uint8_t cell_configure_modem(void)
    // Clear the configuration request flag
    configure_modem = 0;
    return sim_present;
+}
+
+static void update_device_configuration(const config_data_t* new_config)
+{
+   // Update the device reporting timer if status reporting has changed
+   if (new_config->device_status_transmission_interval_minutes && !device_info.device_config.device_status_transmission_interval_minutes)
+      SET_BIT(LPTIM3->CR, LPTIM_CR_CNTSTRT);
+   else if (!new_config->device_status_transmission_interval_minutes && device_info.device_config.device_status_transmission_interval_minutes)
+   {
+      CLEAR_BIT(LPTIM3->CR, LPTIM_CR_ENABLE);
+      while (READ_BIT(LPTIM3->CR, LPTIM_CR_ENABLE));
+      SET_BIT(LPTIM3->CR, LPTIM_CR_ENABLE);
+      WRITE_REG(LPTIM3->ARR, CELL_TIMER_1MIN_COUNT);
+      while (READ_REG(LPTIM3->ARR) != CELL_TIMER_1MIN_COUNT);
+   }
+
+   // Copy the new configuration to non-volatile storage
+   data.packets[0].ai_config.audio_clip_length_seconds = data.packets[1].ai_config.audio_clip_length_seconds = new_config->audio_clip_length_seconds;
+   data.packets[0].ai_config.storage_classification_threshold = data.packets[1].ai_config.storage_classification_threshold = new_config->storage_classification_threshold;
+   device_info.device_config = *new_config;
+   chip_save_config();
+
+   // Transmit a device status message to acknowledge receipt of the configuration change request
+   device_update_timer_count = device_info_update = 0;
+   cell_mqtt_publish_device_info();
 }
 
 static char* handle_mqtt_message(char* msg, uint16_t max_msg_len, uint8_t is_mqttsn_message)
@@ -769,6 +799,7 @@ static uint16_t cell_process_message(char* msg, uint16_t max_msg_len)
    {
       memcpy((char*)data.packets[0].imsi, msg, CELL_IMSI_LENGTH);
       memcpy((char*)data.packets[1].imsi, msg, CELL_IMSI_LENGTH);
+      memcpy((char*)device_info.imsi, msg, CELL_IMSI_LENGTH);
       msg += CELL_IMSI_LENGTH + 1;
       reading_imsi = 0;
    }
@@ -791,7 +822,11 @@ void LPTIM3_IRQHandler(void)
 {
    // Clear the interrupt and set the device update flag
    WRITE_REG(LPTIM3->ICR, LPTIM_FLAG_ARRM);
-   device_info_update = 1;
+   if (++device_update_timer_count >= device_info.device_config.device_status_transmission_interval_minutes)
+   {
+      device_update_timer_count = 0;
+      device_info_update = 1;
+   }
 }
 
 void LPTIM4_IRQHandler(void)
@@ -1016,8 +1051,8 @@ void cell_init(void)
    MODIFY_REG(LPTIM3->CFGR, (LPTIM_CFGR_CKSEL | LPTIM_CFGR_TRIGEN | LPTIM_CFGR_PRELOAD | LPTIM_CFGR_WAVPOL | LPTIM_CFGR_PRESC | LPTIM_CFGR_COUNTMODE), LPTIM_PRESCALER_DIV128);
    WRITE_REG(LPTIM3->IER, LPTIM_IT_ARRM);
    SET_BIT(LPTIM3->CR, LPTIM_CR_ENABLE);
-   WRITE_REG(LPTIM3->ARR, CELL_TIMER_5MIN_COUNT);
-   while (READ_REG(LPTIM3->ARR) != CELL_TIMER_5MIN_COUNT);
+   WRITE_REG(LPTIM3->ARR, CELL_TIMER_1MIN_COUNT);
+   while (READ_REG(LPTIM3->ARR) != CELL_TIMER_1MIN_COUNT);
    NVIC_SetPriority(LPTIM3_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 0, 0));
    NVIC_EnableIRQ(LPTIM3_IRQn);
 
@@ -1088,8 +1123,9 @@ void cell_init(void)
    // Configure all general non-persistent modem parameters
    if (cell_configure_modem())
    {
-      // Start a continuous 5-minute device info update timer
-      SET_BIT(LPTIM3->CR, LPTIM_CR_CNTSTRT);
+      // Start a continuous device info update timer if enabled
+      if (device_info.device_config.device_status_transmission_interval_minutes)
+         SET_BIT(LPTIM3->CR, LPTIM_CR_CNTSTRT);
    }
 }
 
@@ -1119,9 +1155,11 @@ void cell_update_state(void)
    }
    if (device_info_update)
    {
+      // Poll for the current cell signal quality and publish device status details
       device_info_update = 0;
       if (valid_pdp)
          cell_send_command_await_response(CELL_GET_SIGNAL_QUALITY_MSG, sizeof(CELL_GET_SIGNAL_QUALITY_MSG), 1000);
+      cell_mqtt_publish_device_info();
    }
    while (pending_messages)
       cell_process_network_message(cell_mqtt_read());
@@ -1141,7 +1179,6 @@ void cell_update_device_details(void)
       device_info.timestamp = data.packets[0].timestamp;
       device_info.lat = data.packets[0].lat; device_info.lon = data.packets[0].lon; device_info.ht = data.packets[0].ht;
       device_info.q1 = data.packets[0].q1; device_info.q2 = data.packets[0].q2; device_info.q3 = data.packets[0].q3;
-      device_info.chip_temperature_alert = temperature_alert;
       device_info.signal_power = signal_power;
       device_info.signal_quality = signal_quality;
    }
@@ -1150,9 +1187,9 @@ void cell_update_device_details(void)
 void cell_transmit_alert(alert_message_t *alert)
 {
    // Piggyback the current device details onto the event alert message
-   alert->sensor_temperature_alert = device_info.chip_temperature_alert;
-   alert->cell_signal_power = device_info.signal_power;
-   alert->cell_signal_quality = device_info.signal_quality;
+   device_update_timer_count = 0;
+   alert->cell_signal_power = signal_power;
+   alert->cell_signal_quality = signal_quality;
    cell_mqtt_publish_alert(alert);
 }
 
@@ -1200,7 +1237,5 @@ uint8_t cell_is_busy(void)
    // Return whether the cellular modem is currently in use
    return cell_busy;
 }
-
-// TODO: BROKER CAN REQUEST DEVICE INFO UPDATES WHENEVER, STORE MQTT DURATIONS AND QOS IN NVM SOMEWHERE AND ALLOW BROKER TO CHANGE THESE VALUES (NOT HARDCODED)
 
 #endif  // #ifdef CORE_CM4

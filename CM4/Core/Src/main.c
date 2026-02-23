@@ -72,7 +72,7 @@ int main(void)
    {
       // Carry out slow processing operations
       ai_process_detections(); // TODO: MOVE SOMEWHERE APPROPRIATE
-      audio_process_new_data(CELL_AUDIO_NO_TRANSMIT); // TODO: Call with correct parameter
+      audio_process_new_data(CELL_AUDIO_NO_TRANSMIT); // TODO: Call with correct parameter (based on device_info.device_config...)
       cell_update_state();
 
       // Put the CPU to sleep if nothing left to process
