@@ -342,7 +342,10 @@ static ubx_message_type_t gps_process_message(const uint8_t* msg, uint16_t max_m
    {
       const ubx_tim_tm2_t *message = (const ubx_tim_tm2_t*)(msg + UBX_MSG_PAYLOAD_OFFSET);
       if (message->time && message->newRisingEdge && (message->towMsR <= 604800000))
+      {
          next_timestamp = tm2_to_gps_timestamp(message->wnR, message->towMsR, message->towSubMsR);
+         gps_set_led_status(0);
+      }
       return UBX_TIM_TM2;
    }
    else if ((msg[UBX_MSG_CLASS_OFFSET] == 0x06) && (msg[UBX_MSG_ID_OFFSET] == 0x8B))
