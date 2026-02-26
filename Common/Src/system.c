@@ -91,6 +91,26 @@ void PendSV_Handler(void) {}
 void SysTick_Handler(void) { HAL_IncTick(); }
 
 
+#ifdef CORE_CM4
+
+#if REV_ID != REV_A
+extern void imu_irq_handler(void);
+#endif
+extern void AI_INT_IRQHandler(void);
+
+void EXTI9_5_IRQHandler(void)
+{
+#if REV_ID != REV_A
+   if (READ_BIT(EXTI->C2PR1, IMU_INT_Pin))
+      imu_irq_handler();
+   else
+#endif
+      AI_INT_IRQHandler();
+}
+
+#endif
+
+
 // Public API Functions ------------------------------------------------------------------------------------------------
 
 void chip_reset(void)

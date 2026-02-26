@@ -1241,6 +1241,7 @@ static volatile uint16_t imu_data_count;
 
 static bdma_int_registers_t *bdma_int_registers;
 static volatile int32_t curr_q1 = 0, curr_q2 = 0, curr_q3 = 0;
+static volatile uint8_t irqs_enabled = 0;
 
 
 // Interrupt Service Routines ------------------------------------------------------------------------------------------
@@ -1250,31 +1251,34 @@ void I2C4_ER_IRQHandler(void)
    // Clear all I2C4 error interrupts so that reading can continue
    WRITE_REG(I2C4->ICR, (I2C_FLAG_ARLO | I2C_FLAG_BERR | I2C_FLAG_OVR | I2C_FLAG_PECERR));
    CLEAR_BIT(I2C4->CR2, (I2C_CR2_HEAD10R | I2C_CR2_NBYTES | I2C_CR2_RELOAD | I2C_CR2_AUTOEND | I2C_CR2_RD_WRN));
-   NVIC_EnableIRQ(I2C_IMU_INT_IRQn);
    NVIC_DisableIRQ(I2C4_EV_IRQn);
+   irqs_enabled = 1;
 }
 
 #if REV_ID == REV_A
 void EXTI15_10_IRQHandler(void)
 #else
-void EXTI9_5_IRQHandler(void)
+void imu_irq_handler(void)
 #endif
 {
-   // Clear the data-ready interrupt and toggle relevant interrupt lines
-   WRITE_REG(EXTI->C2PR1, IMU_INT_Pin);
-   NVIC_DisableIRQ(I2C_IMU_INT_IRQn);
-   NVIC_EnableIRQ(I2C4_EV_IRQn);
+   // Only handle if we currently care about IMU interrupts
+   if (irqs_enabled)
+   {
+      // Clear the data-ready interrupt and toggle relevant interrupt lines
+      WRITE_REG(EXTI->C2PR1, IMU_INT_Pin);
+      NVIC_EnableIRQ(I2C4_EV_IRQn);
 
-   // Prepare the BDMA to read the FIFO data count
-   imu_data_count = 0;
-   WRITE_REG(I2C4->TXDR, IMU_REG_FIFO_COUNTH);
-   CLEAR_BIT(BDMA_Channel0->CCR, BDMA_CCR_EN);
-   WRITE_REG(BDMA_Channel0->CM0AR, (uint32_t)&imu_data_count);
-   WRITE_REG(BDMA_Channel0->CNDTR, sizeof(imu_data_count));
-   SET_BIT(BDMA_Channel0->CCR, BDMA_CCR_EN);
+      // Prepare the BDMA to read the FIFO data count
+      imu_data_count = 0;
+      WRITE_REG(I2C4->TXDR, IMU_REG_FIFO_COUNTH);
+      CLEAR_BIT(BDMA_Channel0->CCR, BDMA_CCR_EN);
+      WRITE_REG(BDMA_Channel0->CM0AR, (uint32_t)&imu_data_count);
+      WRITE_REG(BDMA_Channel0->CNDTR, sizeof(imu_data_count));
+      SET_BIT(BDMA_Channel0->CCR, BDMA_CCR_EN);
 
-   // Initiate the IMU data read
-   MODIFY_REG(I2C4->CR2, (I2C_CR2_NBYTES | I2C_CR2_AUTOEND | I2C_CR2_RD_WRN), (((1UL << I2C_CR2_NBYTES_Pos) & I2C_CR2_NBYTES) | I2C_GENERATE_START_WRITE));
+      // Initiate the IMU data read
+      MODIFY_REG(I2C4->CR2, (I2C_CR2_NBYTES | I2C_CR2_AUTOEND | I2C_CR2_RD_WRN), (((1UL << I2C_CR2_NBYTES_Pos) & I2C_CR2_NBYTES) | I2C_GENERATE_START_WRITE));
+   }
 }
 
 void I2C4_EV_IRQHandler(void)
@@ -1291,7 +1295,7 @@ void I2C4_EV_IRQHandler(void)
       // Clear the NACK error flag and re-enable data-ready interrupts
       WRITE_REG(I2C4->ICR, I2C_FLAG_AF);
       NVIC_DisableIRQ(I2C4_EV_IRQn);
-      NVIC_EnableIRQ(I2C_IMU_INT_IRQn);
+      irqs_enabled = 1;
    }
 }
 
@@ -1327,7 +1331,7 @@ void BDMA_Channel0_IRQHandler(void)
       NVIC_EnableIRQ(I2C4_EV_IRQn);
    }
    else
-      NVIC_EnableIRQ(I2C_IMU_INT_IRQn);
+      irqs_enabled = 1;
 }
 
 
@@ -1475,11 +1479,7 @@ void imu_init(void)
    uint32_t iocurrent = IMU_INT_Pin & (1UL << position);
    CLEAR_BIT(IMU_INT_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
    MODIFY_REG(IMU_INT_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_IT_FALLING & GPIO_MODE) << (position * 2U)));
-#if REV_ID == REV_A
-   MODIFY_REG(SYSCFG->EXTICR[position >> 2U], (0x0FUL << (4U * (position & 0x03U))), (5UL << (4U * (position & 0x03U))));
-#else
-   MODIFY_REG(SYSCFG->EXTICR[position >> 2U], (0x0FUL << (4U * (position & 0x03U))), (1UL << (4U * (position & 0x03U))));
-#endif
+   MODIFY_REG(SYSCFG->EXTICR[position >> 2U], (0x0FUL << (4U * (position & 0x03U))), (GPIO_GET_INDEX(IMU_INT_GPIO_Port) << (4U * (position & 0x03U))));
    CLEAR_BIT(EXTI->RTSR1, iocurrent);
    SET_BIT(EXTI->FTSR1, iocurrent);
    CLEAR_BIT(EXTI_D2->EMR1, iocurrent);
@@ -1814,6 +1814,7 @@ void imu_start(void)
    }
 
    // Enable data-ready and transmission-complete interrupts
+   irqs_enabled = 1;
    WRITE_REG(EXTI->C2PR1, IMU_INT_Pin);
    NVIC_SetPriority(BDMA_Channel0_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 0, 1));
    NVIC_EnableIRQ(BDMA_Channel0_IRQn);
