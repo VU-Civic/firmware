@@ -10,6 +10,7 @@
 // AI Data Type Definitions --------------------------------------------------------------------------------------------
 
 #define I2C_AI_DEVICE_ADDRESS      144
+#define AI_INT_IRQn                EXTI9_5_IRQn
 
 
 // Static AI Communication Variables -----------------------------------------------------------------------------------
@@ -18,7 +19,7 @@ __attribute__ ((section (".ramd3")))
 static volatile ai_result_t ai_result_buffers[2];
 
 static volatile ai_result_t *ai_result;
-static volatile uint8_t ai_result_write_idx;
+static volatile uint8_t ai_result_write_idx, ai_interrupt_received;
 
 static dma_int_registers_t *spi2_dma_int_registers;
 static dma_int_registers_t *i2c3_dma_int_registers;
@@ -49,6 +50,13 @@ void SPI2_IRQHandler(void)
       CLEAR_BIT(SPI2->CR1, SPI_CR1_SPE);
       CLEAR_BIT(SPI2->CFG1, SPI_CFG1_TXDMAEN);
    }
+}
+
+void AI_INT_IRQHandler(void)
+{
+   // Clear the interrupt and set the interrupt-received flag
+   WRITE_REG(EXTI->C2PR1, FROM_AI_INT_Pin);
+   ai_interrupt_received = 1;
 }
 
 void I2C3_ER_IRQHandler(void)
@@ -88,6 +96,20 @@ void I2C3_EV_IRQHandler(void)
 }
 
 
+// Private Helper Functions --------------------------------------------------------------------------------------------
+
+static void validate_comms(void)
+{
+   // Wait 5 seconds for the AI interrupt line to be asserted low
+   for (uint32_t i = 0; READ_BIT(FROM_AI_INT_GPIO_Port->IDR, FROM_AI_INT_Pin) && (i <= 50); ++i)
+      HAL_Delay(100);
+
+   // Force a system reset if not asserted within 5 seconds
+   if (READ_BIT(FROM_AI_INT_GPIO_Port->IDR, FROM_AI_INT_Pin))
+      NVIC_SystemReset();
+}
+
+
 // Public API Functions ------------------------------------------------------------------------------------------------
 
 void ai_comms_init(void)
@@ -124,19 +146,17 @@ void ai_comms_init(void)
 
    // Initialize the non-peripheral GPIO pins
    uint32_t position = 32 - __builtin_clz(FROM_AI_INT_Pin) - 1;
+   MODIFY_REG(FROM_AI_INT_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)), (GPIO_PULLUP << (position * 2U)));
 #ifdef AI_TO_HOST_INT
    uint32_t iocurrent = FROM_AI_INT_Pin & (1UL << position);
-   CLEAR_BIT(FROM_AI_INT_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
-   MODIFY_REG(FROM_AI_INT_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_IT_RISING & GPIO_MODE) << (position * 2U)));
-   MODIFY_REG(SYSCFG->EXTICR[position >> 2U], (0x0FUL << (4U * (position & 0x03U))), (2UL << (4U * (position & 0x03U))));
-   CLEAR_BIT(EXTI->FTSR1, iocurrent);
-   SET_BIT(EXTI->RTSR1, iocurrent);
+   MODIFY_REG(FROM_AI_INT_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_IT_FALLING & GPIO_MODE) << (position * 2U)));
+   MODIFY_REG(SYSCFG->EXTICR[position >> 2U], (0x0FUL << (4U * (position & 0x03U))), (GPIO_GET_INDEX(FROM_AI_INT_GPIO_Port) << (4U * (position & 0x03U))));
+   CLEAR_BIT(EXTI->RTSR1, iocurrent);
+   SET_BIT(EXTI->FTSR1, iocurrent);
    CLEAR_BIT(EXTI_D2->EMR1, iocurrent);
    SET_BIT(EXTI_D2->IMR1, iocurrent);
 #else
-   MODIFY_REG(FROM_AI_INT_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_ANALOG & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
-   CLEAR_BIT(FROM_AI_INT_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
-   MODIFY_REG(FROM_AI_INT_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_ANALOG & GPIO_MODE) << (position * 2U)));
+   MODIFY_REG(FROM_AI_INT_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_INPUT & GPIO_MODE) << (position * 2U)));
 #endif
 
    // Initialize the SPI2 GPIO pins
@@ -252,8 +272,15 @@ void ai_comms_start(void)
    NVIC_SetPriority(I2C3_EV_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 0, 2));
    NVIC_EnableIRQ(I2C3_EV_IRQn);
    SET_BIT(DMA2_Stream0->CR, DMA_SxCR_EN);
-   WRITE_REG(I2C3->CR1, (I2C_CR1_ERRIE | I2C_CR1_STOPIE | I2C_CR1_NOSTRETCH | I2C_CR1_RXDMAEN | I2C_CR1_PE));//I2C_CR1_ADDRIE | I2C_CR1_NOSTRETCH |
+   WRITE_REG(I2C3->CR1, (I2C_CR1_ERRIE | I2C_CR1_STOPIE | I2C_CR1_NOSTRETCH | I2C_CR1_RXDMAEN | I2C_CR1_PE));//I2C_CR1_ADDRIE
    MODIFY_REG(I2C3->CR2, I2C_CR2_NACK, ((sizeof(ai_result_t) << I2C_CR2_NBYTES_Pos) & I2C_CR2_NBYTES));
+
+   // Enable incoming AI interrupts
+#ifdef AI_TO_HOST_INT
+   WRITE_REG(EXTI->C2PR1, FROM_AI_INT_Pin);
+   NVIC_SetPriority(AI_INT_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 0, 3));
+   NVIC_EnableIRQ(AI_INT_IRQn);
+#endif
 }
 
 void ai_send(const uint8_t *data, uint16_t data_length)
@@ -274,6 +301,9 @@ void ai_send(const uint8_t *data, uint16_t data_length)
 
 void ai_process_detections(void)
 {
+   // Validate that AI communications are functioning properly
+   validate_comms();
+
    // Process any new AI event detections
    if (ai_result)
    {

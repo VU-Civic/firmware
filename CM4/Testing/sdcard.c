@@ -67,8 +67,8 @@ int main(void)
    audio_init();
    imu_init();
    gps_init();
-   ai_comms_init();
    cell_init();
+   ai_comms_init();
 
    // Start user peripherals
    imu_start();
@@ -80,6 +80,7 @@ int main(void)
    while (1)
    {
       // Carry out slow processing operations
+      ai_process_detections();
       audio_process_new_data(CELL_AUDIO_NO_TRANSMIT);
       cell_update_state();
 

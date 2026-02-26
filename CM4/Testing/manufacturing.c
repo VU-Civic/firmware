@@ -57,8 +57,8 @@ int main(void)
    audio_init();
    imu_init();
    gps_init();
-   ai_comms_init();
    cell_init();
+   ai_comms_init();
    opusenc_init();
 
    // Start user peripherals
