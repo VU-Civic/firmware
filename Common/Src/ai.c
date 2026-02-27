@@ -18,8 +18,10 @@
 __attribute__ ((section (".ramd3")))
 static volatile ai_result_t ai_result_buffers[2];
 
+static uint32_t validation_timeout;
 static volatile ai_result_t *ai_result;
 static volatile uint8_t ai_result_write_idx, ai_interrupt_received;
+static volatile uint32_t ai_last_validation_time;
 
 static dma_int_registers_t *spi2_dma_int_registers;
 static dma_int_registers_t *i2c3_dma_int_registers;
@@ -93,20 +95,6 @@ void I2C3_EV_IRQHandler(void)
       // Initiate the AI data read
       MODIFY_REG(I2C3->CR2, (I2C_CR2_NACK | I2C_CR2_NBYTES), ((sizeof(ai_result_t) << I2C_CR2_NBYTES_Pos) & I2C_CR2_NBYTES));
    }
-}
-
-
-// Private Helper Functions --------------------------------------------------------------------------------------------
-
-static void validate_comms(void)
-{
-   // Wait 5 seconds for the AI interrupt line to be asserted low
-   for (uint32_t i = 0; READ_BIT(FROM_AI_INT_GPIO_Port->IDR, FROM_AI_INT_Pin) && (i <= 50); ++i)
-      HAL_Delay(100);
-
-   // Force a system reset if not asserted within 5 seconds
-   if (READ_BIT(FROM_AI_INT_GPIO_Port->IDR, FROM_AI_INT_Pin))
-      NVIC_SystemReset();
 }
 
 
@@ -275,6 +263,10 @@ void ai_comms_start(void)
    WRITE_REG(I2C3->CR1, (I2C_CR1_ERRIE | I2C_CR1_STOPIE | I2C_CR1_NOSTRETCH | I2C_CR1_RXDMAEN | I2C_CR1_PE));//I2C_CR1_ADDRIE
    MODIFY_REG(I2C3->CR2, I2C_CR2_NACK, ((sizeof(ai_result_t) << I2C_CR2_NBYTES_Pos) & I2C_CR2_NBYTES));
 
+   // Configure the AI communication validation timeout
+   validation_timeout = SystemCoreClock * 10;
+   ai_last_validation_time = 0;
+
    // Enable incoming AI interrupts
 #ifdef AI_TO_HOST_INT
    WRITE_REG(EXTI->C2PR1, FROM_AI_INT_Pin);
@@ -301,8 +293,11 @@ void ai_send(const uint8_t *data, uint16_t data_length)
 
 void ai_process_detections(void)
 {
-   // Validate that AI communications are functioning properly
-   validate_comms();
+   // Validate that AI communications have not been reported erroneous for more than 10 seconds
+   if (!READ_BIT(FROM_AI_INT_GPIO_Port->IDR, FROM_AI_INT_Pin))
+      ai_last_validation_time = DWT->CYCCNT;
+   else if ((DWT->CYCCNT - ai_last_validation_time) > validation_timeout)
+      NVIC_SystemReset();
 
    // Process any new AI event detections
    if (ai_result)
