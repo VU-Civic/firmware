@@ -149,29 +149,29 @@ void ai_comms_init(void)
 
    // Initialize the SPI2 GPIO pins
    position = 32 - __builtin_clz(TO_AI_CS_Pin) - 1;
-   MODIFY_REG(TO_AI_CS_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_HIGH << (position * 2U)));
-   MODIFY_REG(TO_AI_CS_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_AF_PP & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
+   MODIFY_REG(TO_AI_CS_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_VERY_HIGH << (position * 2U)));
+   MODIFY_REG(TO_AI_CS_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_AF_OD & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
    CLEAR_BIT(TO_AI_CS_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
    MODIFY_REG(TO_AI_CS_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (GPIO_AF5_SPI2 << ((position & 0x07U) * 4U)));
-   MODIFY_REG(TO_AI_CS_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_AF_PP & GPIO_MODE) << (position * 2U)));
+   MODIFY_REG(TO_AI_CS_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_AF_OD & GPIO_MODE) << (position * 2U)));
    position = 32 - __builtin_clz(TO_AI_SCK_Pin) - 1;
-   MODIFY_REG(TO_AI_SCK_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_HIGH << (position * 2U)));
+   MODIFY_REG(TO_AI_SCK_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_VERY_HIGH << (position * 2U)));
    MODIFY_REG(TO_AI_SCK_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_AF_PP & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
    CLEAR_BIT(TO_AI_SCK_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
    MODIFY_REG(TO_AI_SCK_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (GPIO_AF5_SPI2 << ((position & 0x07U) * 4U)));
    MODIFY_REG(TO_AI_SCK_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_AF_PP & GPIO_MODE) << (position * 2U)));
-   position = 32 - __builtin_clz(TO_AI_MISO_Pin) - 1;
-   MODIFY_REG(TO_AI_MISO_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_HIGH << (position * 2U)));
-   MODIFY_REG(TO_AI_MISO_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_AF_PP & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
-   CLEAR_BIT(TO_AI_MISO_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
-   MODIFY_REG(TO_AI_MISO_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (GPIO_AF5_SPI2 << ((position & 0x07U) * 4U)));
-   MODIFY_REG(TO_AI_MISO_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_AF_PP & GPIO_MODE) << (position * 2U)));
    position = 32 - __builtin_clz(TO_AI_MOSI_Pin) - 1;
-   MODIFY_REG(TO_AI_MOSI_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_HIGH << (position * 2U)));
+   MODIFY_REG(TO_AI_MOSI_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_VERY_HIGH << (position * 2U)));
    MODIFY_REG(TO_AI_MOSI_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_AF_PP & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
    CLEAR_BIT(TO_AI_MOSI_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
    MODIFY_REG(TO_AI_MOSI_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (GPIO_AF5_SPI2 << ((position & 0x07U) * 4U)));
    MODIFY_REG(TO_AI_MOSI_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_AF_PP & GPIO_MODE) << (position * 2U)));
+   position = 32 - __builtin_clz(TO_AI_MISO_Pin) - 1;
+   MODIFY_REG(TO_AI_MISO_GPIO_Port->OSPEEDR, (GPIO_OSPEEDR_OSPEED0 << (position * 2U)), (GPIO_SPEED_FREQ_VERY_HIGH << (position * 2U)));
+   MODIFY_REG(TO_AI_MISO_GPIO_Port->OTYPER, (GPIO_OTYPER_OT0 << position), (((GPIO_MODE_AF_PP & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position));
+   CLEAR_BIT(TO_AI_MISO_GPIO_Port->PUPDR, (GPIO_PUPDR_PUPD0 << (position * 2U)));
+   MODIFY_REG(TO_AI_MISO_GPIO_Port->AFR[position >> 3U], (0xFU << ((position & 0x07U) * 4U)), (GPIO_AF5_SPI2 << ((position & 0x07U) * 4U)));
+   MODIFY_REG(TO_AI_MISO_GPIO_Port->MODER, (GPIO_MODER_MODE0 << (position * 2U)), ((GPIO_MODE_AF_PP & GPIO_MODE) << (position * 2U)));
 
    // Initialize the I2C3 GPIO pins
    position = 32 - __builtin_clz(FROM_AI_SCL_Pin) - 1;
