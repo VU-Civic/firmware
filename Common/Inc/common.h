@@ -85,8 +85,8 @@
 #define DEFAULT_CONFIG_INITIALIZATION_TAG                         85
 #define DEFAULT_DEVICE_STATUS_UPDATE_INTERVAL_MINUTES             15
 #define DEFAULT_SD_STORAGE_AUDIO_CLIP_MIN_SECONDS                 3
-#define DEFAULT_SD_STORAGE_PROBABILITY_THRESHOLD                  20
-#define DEFAULT_MIN_SHOT_ALERT_PROBABILITY                        20
+#define DEFAULT_SD_STORAGE_PROBABILITY_THRESHOLD                  50
+#define DEFAULT_MIN_SHOT_ALERT_PROBABILITY                        50
 #define DEFAULT_GOOD_SHOT_ALERT_PROBABILITY                       60
 #define DEFAULT_MQTT_DEVICE_INFO_QOS                              0
 #define DEFAULT_MQTT_ALERT_QOS                                    1
