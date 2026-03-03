@@ -60,7 +60,7 @@
 #define MAX_NUM_ONSETS                       (2 + (1000 / MIN_MS_BETWEEN_ONSETS))
 
 #define AI_FIRMWARE_VERSION_LENGTH           8
-#define AI_NUM_CLASSES                       2
+#define AI_NUM_CLASSES                       1
 
 #define MAX_NUM_EVENTS_PER_ALERT             AUDIO_NUM_DMAS_PER_CLIP
 
