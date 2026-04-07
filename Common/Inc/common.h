@@ -23,6 +23,7 @@
 #define AUDIO_SAMPLE_RATE_HZ                 48000
 #define AUDIO_BUFFER_SAMPLES                 32000
 #define AUDIO_DIGITAL_GAIN                   0xD1  // 0xC9 = 0dB, 0xFF = 27dB, 0.5dB increase per value
+#define AUDIO_SILENCE_TIMEOUT_SECONDS        30
 #define AUDIO_BUFFER_SAMPLES_PER_CHANNEL     (AUDIO_BUFFER_SAMPLES / AUDIO_NUM_CHANNELS)
 #define AUDIO_NUM_DMAS_PER_CLIP              (AUDIO_SAMPLE_RATE_HZ * AUDIO_NUM_CHANNELS / AUDIO_BUFFER_SAMPLES)
 
@@ -40,7 +41,7 @@
 #ifdef CELL_MQTT_USE_BINARY_PUBLISH
 #define CELL_MQTT_MAX_PAYLOAD_SIZE_BYTES     1016
 #else
-#define CELL_MQTT_MAX_PAYLOAD_SIZE_BYTES     762
+#define CELL_MQTT_MAX_PAYLOAD_SIZE_BYTES     812
 #endif
 #define CELL_MQTT_MESSAGE_INDEX_MASK         0x7F
 #define CELL_MQTT_MESSAGE_FINAL_MASK         0x80
@@ -56,12 +57,17 @@
 #define OPUS_MS_PER_FRAME                    20
 #define OPUS_HISTORY_MS                      960
 
+#define MIC_CH1_CH2_OFFSET                   {   0.0f, 0.065f }
+#define MIC_CH1_CH3_OFFSET                   { 0.065f,   0.0f }
+#define MIC_CH1_CH4_OFFSET                   { 0.065f, 0.065f }
+
 #define MIN_MS_BETWEEN_ONSETS                50
 #define MAX_NUM_ONSETS                       (2 + (1000 / MIN_MS_BETWEEN_ONSETS))
 
 #define AI_FIRMWARE_VERSION_LENGTH           8
 #define AI_NUM_CLASSES                       1
 
+#define MAX_NUM_ONSETS_PER_CLIP              3
 #define MAX_NUM_EVENTS_PER_ALERT             AUDIO_NUM_DMAS_PER_CLIP
 
 #ifdef PACKET_FULL_AUDIO
@@ -120,6 +126,8 @@ typedef struct __attribute__ ((__packed__))
    uint8_t shot_detection_min_threshold, shot_detection_good_threshold;
    uint8_t storage_classification_threshold, audio_clip_length_seconds;
    uint8_t device_status_transmission_interval_minutes;
+   uint8_t bad_audio_restart_attempted, bad_ai_restart_attempted;
+   uint8_t reserved[21];
 } config_data_t;
 
 typedef struct __attribute__ ((__packed__))
@@ -134,6 +142,18 @@ typedef struct __attribute__ ((__packed__))
    uint8_t class_probabilities[AI_NUM_CLASSES];
 } ai_result_t;
 
+typedef union
+{
+   uint8_t alarms;
+   struct {
+      uint8_t ch1 : 1;
+      uint8_t ch2 : 1;
+      uint8_t ch3 : 1;
+      uint8_t ch4 : 1;
+      uint8_t     : 4;
+   } alarm;
+} channel_alarms_t;
+
 typedef struct __attribute__ ((__packed__, aligned (16)))
 {
    uint8_t start_delimiter[4];
@@ -143,7 +163,8 @@ typedef struct __attribute__ ((__packed__, aligned (16)))
    int32_t q1, q2, q3;
    char imei[CELL_IMEI_LENGTH+1], imsi[CELL_IMSI_LENGTH+1];
    ai_config_t ai_config;
-   uint8_t reserved[6];
+   channel_alarms_t channel_alarms;
+   uint8_t reserved[5];
    uint8_t end_delimiter[4];
 } data_packet_t;
 
@@ -158,26 +179,25 @@ typedef struct __attribute__ ((__packed__, aligned (4)))
    char device_id[CELL_IMEI_LENGTH+1], imsi[CELL_IMSI_LENGTH+1];
    uint8_t firmware_version[FIRMWARE_VERSION_LENGTH];
    uint8_t ai_firmware_version[AI_FIRMWARE_VERSION_LENGTH];
-   double timestamp;
    float lat, lon, ht;
    int32_t q1, q2, q3;
    uint8_t signal_power, signal_quality;
+   channel_alarms_t channel_alarms;
    config_data_t device_config;
 } device_info_t;
 
 typedef struct __attribute__ ((__packed__))
 {
-   uint32_t id, class;
    double timestamp;
    float confidence, angle_of_arrival[3];
 } event_info_t;
 
 typedef struct __attribute__ ((__packed__, aligned (4)))
 {
+   char device_id[CELL_IMEI_LENGTH+1];
    int32_t sensor_q1, sensor_q2, sensor_q3;
    float sensor_lat, sensor_lon, sensor_ht;
    uint8_t num_events, cell_signal_power, cell_signal_quality;
-   char device_id[CELL_IMEI_LENGTH+1];
    event_info_t events[MAX_NUM_EVENTS_PER_ALERT];
 } alert_message_t;
 
@@ -186,6 +206,12 @@ typedef struct __attribute__ ((__packed__, aligned (4)))
    uint8_t device_id[7], clip_id, message_idx_and_final;
    uint8_t data[CELL_EVIDENCE_MAX_PAYLOAD_SIZE];
 } evidence_message_t;
+
+typedef struct
+{
+   uint32_t num_onsets;
+   int32_t indices[MAX_NUM_ONSETS_PER_CLIP];
+} onset_details_t;
 
 typedef enum
 {

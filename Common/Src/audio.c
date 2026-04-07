@@ -104,6 +104,10 @@ void MDMA_IRQHandler(void)
       // Store metadata to indicate when full clips have been received
       data.audio_read_index = (READ_BIT(DMA1_Stream0->CR, DMA_SxCR_CT) == 0U);
       data.audio_clip_complete = READ_BIT(GPS_TIME_TRIGGER_GPIO_Port->IDR, GPS_TIME_TRIGGER_Pin);
+      data.packets[data.audio_read_index].channel_alarms.alarm.ch1 = ((audio_data[data.audio_read_index][0][0] == 0) || (audio_data[data.audio_read_index][0][0] == -1)) && ((audio_data[data.audio_read_index][0][1] == 0) || (audio_data[data.audio_read_index][0][1] == -1));
+      data.packets[data.audio_read_index].channel_alarms.alarm.ch2 = ((audio_data[data.audio_read_index][1][0] == 0) || (audio_data[data.audio_read_index][1][0] == -1)) && ((audio_data[data.audio_read_index][1][1] == 0) || (audio_data[data.audio_read_index][1][1] == -1));
+      data.packets[data.audio_read_index].channel_alarms.alarm.ch3 = ((audio_data[data.audio_read_index][2][0] == 0) || (audio_data[data.audio_read_index][2][0] == -1)) && ((audio_data[data.audio_read_index][2][1] == 0) || (audio_data[data.audio_read_index][2][1] == -1));
+      data.packets[data.audio_read_index].channel_alarms.alarm.ch4 = ((audio_data[data.audio_read_index][3][0] == 0) || (audio_data[data.audio_read_index][3][0] == -1)) && ((audio_data[data.audio_read_index][3][1] == 0) || (audio_data[data.audio_read_index][3][1] == -1));
 
       // Initiate transfer of audio channels to the other core
       WRITE_REG(MDMA_Channel2->CBNDTR, sizeof(data.packets[0].audio) & MDMA_CBNDTR_BNDT);
@@ -113,7 +117,7 @@ void MDMA_IRQHandler(void)
 
       // Feed the watchdog timer and process the newly received audio
       cpu_feed_watchdog();
-      onset_detection_invoke(audio_data[data.audio_read_index]);
+      onset_detection_invoke(audio_data[data.audio_read_index], data.packets[data.audio_read_index].channel_alarms);
    }
 }
 
@@ -205,7 +209,6 @@ void audio_init(void)
 #endif
 
    // Initialize the SAI peripheral clock
-   // TODO: TRY INTEGER-ONLY SOLUTION (M = 21, N = 289, P = 14) - Should result in 47997.714 Hz
    CLEAR_BIT(RCC->CR, RCC_CR_PLL2ON);
    while (__HAL_RCC_GET_FLAG(RCC_FLAG_PLL2RDY) != 0U);
    __HAL_RCC_PLL2_CONFIG(13, 370, 29, 29, 29);
@@ -516,6 +519,30 @@ void audio_start(void)
 // Static Audio Variables ----------------------------------------------------------------------------------------------
 
 static volatile uint8_t new_audio_received, poll_gps_signal_strength;
+static volatile uint32_t num_bad_audio_packets;
+
+
+// Private Helper Functions --------------------------------------------------------------------------------------------
+
+static void audio_update_channel_alarms(channel_alarms_t alarm_flags)
+{
+   // Determine if there has been bad audio for awhile and we have not already tried a reboot
+   device_info.channel_alarms = alarm_flags;
+   num_bad_audio_packets = (device_info.channel_alarms.alarm.ch1 && device_info.channel_alarms.alarm.ch2 && device_info.channel_alarms.alarm.ch3 && device_info.channel_alarms.alarm.ch4) ? (num_bad_audio_packets + 1) : 0;
+   if ((num_bad_audio_packets == (AUDIO_SILENCE_TIMEOUT_SECONDS * AUDIO_NUM_DMAS_PER_CLIP)) && !device_info.device_config.bad_audio_restart_attempted)
+   {
+      device_info.device_config.bad_audio_restart_attempted = 1;
+      chip_save_config();
+      chip_reset();
+   }
+
+   // Reset the audio reboot flag if the audio starts working
+   if (!num_bad_audio_packets && device_info.device_config.bad_audio_restart_attempted)
+   {
+      device_info.device_config.bad_audio_restart_attempted = 0;
+      chip_save_config();
+   }
+}
 
 
 // Interrupt Service Routines ------------------------------------------------------------------------------------------
@@ -536,6 +563,7 @@ void MDMA_IRQHandler(void)
          gps_update_packet_timestamp(0);
          imu_update_packet_orientation();
          cell_update_device_details();
+         audio_update_channel_alarms(data.packets[data.audio_read_index].channel_alarms);
       }
       else
          gps_update_packet_timestamp(1);
@@ -562,6 +590,7 @@ void audio_init(void)
    data.packets[0].ai_config.audio_clip_length_seconds = data.packets[1].ai_config.audio_clip_length_seconds = device_info.device_config.audio_clip_length_seconds;
    data.packets[0].ai_config.storage_classification_threshold = data.packets[1].ai_config.storage_classification_threshold = device_info.device_config.storage_classification_threshold;
    new_audio_received = poll_gps_signal_strength = 0;
+   num_bad_audio_packets = 0;
 }
 
 void audio_start(void)

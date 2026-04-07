@@ -3,6 +3,7 @@
 // Header Inclusions ---------------------------------------------------------------------------------------------------
 
 #include "ai.h"
+#include "system.h"
 
 
 #if REV_ID != REV_A
@@ -94,6 +95,32 @@ void I2C3_EV_IRQHandler(void)
 
       // Initiate the AI data read
       MODIFY_REG(I2C3->CR2, (I2C_CR2_NACK | I2C_CR2_NBYTES), ((sizeof(ai_result_t) << I2C_CR2_NBYTES_Pos) & I2C_CR2_NBYTES));
+   }
+}
+
+
+// Helper Functions ----------------------------------------------------------------------------------------------------
+
+static void validate_ai_comms(void)
+{
+   // Validate that AI communications have not been reported erroneous for more than 10 seconds
+   if (!READ_BIT(FROM_AI_INT_GPIO_Port->IDR, FROM_AI_INT_Pin))
+   {
+      ai_last_validation_time = DWT->CYCCNT;
+      if (device_info.device_config.bad_ai_restart_attempted)
+      {
+         device_info.device_config.bad_ai_restart_attempted = 0;
+         chip_save_config();
+      }
+   }
+   else if ((DWT->CYCCNT - ai_last_validation_time) > validation_timeout)
+   {
+      if (!device_info.device_config.bad_ai_restart_attempted)
+      {
+         device_info.device_config.bad_ai_restart_attempted = 1;
+         chip_save_config();
+      }
+      chip_reset();
    }
 }
 
@@ -293,11 +320,8 @@ void ai_send(const uint8_t *data, uint16_t data_length)
 
 void ai_process_detections(void)
 {
-   // Validate that AI communications have not been reported erroneous for more than 10 seconds
-   if (!READ_BIT(FROM_AI_INT_GPIO_Port->IDR, FROM_AI_INT_Pin))
-      ai_last_validation_time = DWT->CYCCNT;
-   else if ((DWT->CYCCNT - ai_last_validation_time) > validation_timeout)
-      NVIC_SystemReset();
+   // Validate AI communications
+   validate_ai_comms();
 
    // Process any new AI event detections
    if (ai_result)

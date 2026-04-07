@@ -140,6 +140,7 @@ void chip_read_config(void)
       device_info.device_config.storage_classification_threshold = DEFAULT_SD_STORAGE_PROBABILITY_THRESHOLD;
       device_info.device_config.audio_clip_length_seconds = DEFAULT_SD_STORAGE_AUDIO_CLIP_MIN_SECONDS;
       device_info.device_config.device_status_transmission_interval_minutes = DEFAULT_DEVICE_STATUS_UPDATE_INTERVAL_MINUTES;
+      device_info.device_config.bad_audio_restart_attempted = device_info.device_config.bad_ai_restart_attempted = 0;
 
       // Store default configuration to non-volatile memory
       chip_save_config();
