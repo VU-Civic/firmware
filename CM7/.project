@@ -265,6 +265,16 @@
 			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/SupportFunctions/arm_copy_q7.c</locationURI>
 		</link>
 		<link>
+			<name>Drivers/CMSIS_DSP/Source/SupportFunctions/arm_fill_f32.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/SupportFunctions/arm_fill_f32.c</locationURI>
+		</link>
+		<link>
+			<name>Drivers/CMSIS_DSP/Source/SupportFunctions/arm_fill_q15.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/SupportFunctions/arm_fill_q15.c</locationURI>
+		</link>
+		<link>
 			<name>Drivers/CMSIS_DSP/Source/SupportFunctions/arm_float_to_q15.c</name>
 			<type>1</type>
 			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/SupportFunctions/arm_float_to_q15.c</locationURI>
@@ -303,6 +313,11 @@
 			<name>Drivers/CMSIS_DSP/Source/TransformFunctions/arm_rfft_fast_init_f32.c</name>
 			<type>1</type>
 			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/TransformFunctions/arm_rfft_fast_init_f32.c</locationURI>
+		</link>
+		<link>
+			<name>Drivers/CMSIS_DSP/Source/WindowFunctions/arm_hanning_f32.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/WindowFunctions/arm_hanning_f32.c</locationURI>
 		</link>
 	</linkedResources>
 </projectDescription>
