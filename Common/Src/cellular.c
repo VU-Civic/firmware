@@ -353,36 +353,42 @@ static uint32_t hex_encode_binary_data(char *output, const uint8_t *input, uint3
    return input_num_bytes * 2;
 }
 
-static uint32_t base64_encode_binary_data(char *output, const uint8_t *input, uint32_t input_num_bytes)
+static uint32_t base85_encode_binary_data(char *output, const uint8_t *input, uint32_t input_num_bytes)
 {
-   // The standard Base64 alphabet table
-   static const char encoding_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-   // Iterate through all input characters in groups of 3 bytes
+   // Iterate through all input bytes in groups of 4
    uint32_t in_idx = 0, out_idx = 0;
-   const uint32_t three_byte_packets = input_num_bytes / 3;
-   for (uint32_t i = 0; i < three_byte_packets; ++i, in_idx += 3, out_idx += 4)
+   const uint32_t four_byte_packets = input_num_bytes >> 2;
+   for (uint32_t i = 0; i < four_byte_packets; ++i, in_idx += 4, out_idx += 5)
    {
-      const uint32_t a = input[in_idx], b = input[in_idx + 1], c = input[in_idx + 2];
-      const uint32_t triple = (a << 0x10) + (b << 0x08) + c;
-      output[out_idx] = encoding_table[(triple >> 18) & 0x3F];
-      output[out_idx + 1] = encoding_table[(triple >> 12) & 0x3F];
-      output[out_idx + 2] = encoding_table[(triple >> 6) & 0x3F];
-      output[out_idx + 3] = encoding_table[triple & 0x3F];
+      uint32_t val = ((uint32_t)input[in_idx] << 24) | ((uint32_t)input[in_idx + 1] << 16) | ((uint32_t)input[in_idx + 2] << 8) | ((uint32_t)input[in_idx + 3]);
+      uint32_t q = (uint32_t)(((uint64_t)val * 3233857729ULL) >> 38);
+      output[out_idx + 4] = '!' + (val - (q * 85));
+      val = q; q = (uint32_t)(((uint64_t)val * 3233857729ULL) >> 38);
+      output[out_idx + 3] = '!' + (val - (q * 85));
+      val = q; q = (uint32_t)(((uint64_t)val * 3233857729ULL) >> 38);
+      output[out_idx + 2] = '!' + (val - (q * 85));
+      val = q; q = (uint32_t)(((uint64_t)val * 3233857729ULL) >> 38);
+      output[out_idx + 1] = '!' + (val - (q * 85));
+      output[out_idx] = '!' + q;
    }
 
    // Pad and encode any remaining bytes
-   if (in_idx < input_num_bytes)
+   const uint32_t remaining = input_num_bytes - in_idx;
+   if (remaining > 0)
    {
-      const uint32_t a = input[in_idx++];
-      const uint32_t b = (in_idx < input_num_bytes) ? input[in_idx++ + 1] : '=';
-      const uint32_t c = (in_idx < input_num_bytes) ? input[in_idx + 2] : '=';
-      const uint32_t triple = (a << 0x10) + (b << 0x08) + c;
-      output[out_idx] = encoding_table[(triple >> 18) & 0x3F];
-      output[out_idx + 1] = encoding_table[(triple >> 12) & 0x3F];
-      output[out_idx + 2] = encoding_table[(triple >> 6) & 0x3F];
-      output[out_idx + 3] = encoding_table[triple & 0x3F];
-      out_idx += 4;
+      // Pad with zeros to form a full 32-bit value
+      uint32_t val = 0;
+      for (uint32_t j = 0; j < remaining; ++j)
+         val |= (uint32_t)input[in_idx + j] << (24 - (j * 8));
+      char encoded[5];
+      for (int j = 4; j >= 0; --j)
+      {
+         uint32_t q = (uint32_t)(((uint64_t)val * 3233857729ULL) >> 38);
+         encoded[j] = '!' + (val - (q * 85));
+         val = q;
+      }
+      for (uint32_t j = 0; j < remaining + 1; ++j)
+         output[out_idx++] = encoded[j];
    }
    return out_idx;
 }
@@ -437,7 +443,7 @@ static uint8_t cell_mqtt_publish_audio(const evidence_message_t *evidence_messag
    // Set up the publish transfer buffer
    arm_copy_q7((q7_t*)CELL_MQTTSN_PUBLISH_AUDIO_MSG, (q7_t*)publish_message_buffer, sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG));
    publish_message_buffer[MQTTSN_PUBLISH_MSG_QOS_OFFSET] = (device_info.device_config.mqtt_audio_qos > 0) ? '1' : '0';
-   const uint32_t message_len = 2 + sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG) + base64_encode_binary_data(publish_message_buffer + sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG) - 1, (const uint8_t*)evidence_message, offsetof(evidence_message_t, data) + evidence_message_length);
+   const uint32_t message_len = 2 + sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG) + base85_encode_binary_data(publish_message_buffer + sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG) - 1, (const uint8_t*)evidence_message, offsetof(evidence_message_t, data) + evidence_message_length);
    arm_copy_q7((q7_t*)"\"\r", (q7_t*)publish_message_buffer + message_len - 3, 2);
 
    // Issue the publish command and wait for a response
@@ -1176,7 +1182,6 @@ void cell_update_device_details(void)
    // Update the device info packet with the most current details if not busy
    if (!cell_busy)
    {
-      device_info.timestamp = data.packets[0].timestamp;
       device_info.lat = data.packets[0].lat; device_info.lon = data.packets[0].lon; device_info.ht = data.packets[0].ht;
       device_info.q1 = data.packets[0].q1; device_info.q2 = data.packets[0].q2; device_info.q3 = data.packets[0].q3;
       device_info.signal_power = signal_power;
