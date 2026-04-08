@@ -91,7 +91,7 @@
 #define UBX_SET_MSG_CFG_DATA           CFG_MSGOUT_UBX_NAV_PVT_UART1, 0x01, CFG_MSGOUT_UBX_TIM_TM2_UART1, 0x01
 
 #define UBX_GET_GEN_CFG_DATA           CFG_NAVSPG_DYNMODEL, CFG_NAVSPG_FIXMODE, CFG_NAVSPG_INIFIX3D, CFG_NAVSPG_UTCSTANDARD, CFG_SBAS_USE_RANGING, CFG_SBAS_USE_DIFFCORR, CFG_SBAS_USE_INTEGRITY, CFG_TP_TP1_ENA, CFG_TP_TIMEGRID_TP1, CFG_RATE_MEAS, CFG_RATE_NAV, CFG_RATE_TIMEREF
-#define UBX_SET_GEN_CFG_DATA           CFG_NAVSPG_DYNMODEL, 0x02, CFG_NAVSPG_FIXMODE, 0x03, CFG_NAVSPG_INIFIX3D, 0x01, CFG_NAVSPG_UTCSTANDARD, 0x03, CFG_SBAS_USE_RANGING, 0x00, CFG_SBAS_USE_DIFFCORR, 0x01, CFG_SBAS_USE_INTEGRITY, 0x00, CFG_TP_TP1_ENA, 0x01, CFG_TP_TIMEGRID_TP1, 0x00, CFG_RATE_MEAS, 0xF4, 0x01, CFG_RATE_NAV, 0x02, 0x00, CFG_RATE_TIMEREF, 0x00
+#define UBX_SET_GEN_CFG_DATA           CFG_NAVSPG_DYNMODEL, 0x02, CFG_NAVSPG_FIXMODE, 0x03, CFG_NAVSPG_INIFIX3D, 0x01, CFG_NAVSPG_UTCSTANDARD, 0x03, CFG_SBAS_USE_RANGING, 0x00, CFG_SBAS_USE_DIFFCORR, 0x01, CFG_SBAS_USE_INTEGRITY, 0x00, CFG_TP_TP1_ENA, 0x01, CFG_TP_TIMEGRID_TP1, 0x00, CFG_RATE_MEAS, 0xF4, 0x01, CFG_RATE_NAV, 0x01, 0x00, CFG_RATE_TIMEREF, 0x00
 
 #define UBX_GET_LNA_DATA               CFG_HW_RF_LNA_MODE
 #define UBX_SET_LNA_DATA               CFG_HW_RF_LNA_MODE, HW_RF_LNA_MODE
@@ -341,9 +341,12 @@ static ubx_message_type_t gps_process_message(const uint8_t* msg, uint16_t max_m
    else if ((msg[UBX_MSG_CLASS_OFFSET] == 0x0D) && (msg[UBX_MSG_ID_OFFSET] == 0x03) && (msg_len == sizeof(ubx_tim_tm2_t)))
    {
       const ubx_tim_tm2_t *message = (const ubx_tim_tm2_t*)(msg + UBX_MSG_PAYLOAD_OFFSET);
-      if (message->time && message->newRisingEdge && (message->towMsR <= 604800000))
+      if (message->time && (next_timestamp < 100.0))
       {
-         next_timestamp = tm2_to_gps_timestamp(message->wnR, message->towMsR, message->towSubMsR);
+         if (message->newRisingEdge && (message->towMsR <= 604800000))
+            next_timestamp = tm2_to_gps_timestamp(message->wnR, message->towMsR, message->towSubMsR);
+         else if (message->newFallingEdge && (message->towMsF <= 604800000))
+            next_timestamp = tm2_to_gps_timestamp(message->wnF, message->towMsF, message->towSubMsF) - (1.0 / AUDIO_NUM_DMAS_PER_CLIP);
          gps_set_led_status(0);
       }
       return UBX_TIM_TM2;
@@ -582,7 +585,7 @@ static uint8_t gps_verify_or_set_configuration(void)
    // CFG-NAVSPG-DYNMODEL=2 (Stationary), CFG-NAVSPG-FIXMODE=3 (Auto 2D/3D), CFG-NAVSPG-INIFIX3D=1 (True)
    // CFG-NAVSPG-UTCSTANDARD=3 (USNO, derived from GPS time), CFG-SBAS-USE_RANGING=0, CFG-SBAS-USE_DIFFCORR=1
    // CFG-SBAS-USE_INTEGRITY=0, CFG-TP-TP1_ENA=1 (Timepulse enabled), CFG-TP-TIMEGRID_TP1=0 (UTC time reference for timepulse)
-   // CFG-RATE-MEAS=500 (2Hz), CFG-RATE-NAV=2 (1Hz), CFG-RATE-TIMEREF=0 (align measurements to UTC time)
+   // CFG-RATE-MEAS=500 (2Hz), CFG-RATE-NAV=1 (2Hz), CFG-RATE-TIMEREF=0 (align measurements to UTC time)
    uint8_t ubx_general_cfg_get[] = { UBX_SYNC, UBX_CFG_VALGET_MSG, UBX_MSG_LEN_PLACEHOLDER, UBX_CFG_VALGET_BEGIN, UBX_GET_GEN_CFG_DATA, UBX_MSG_CKSUM_PLACEHOLDER };
    uint8_t ubx_general_cfg_expected[] = { UBX_SYNC, UBX_CFG_VALGET_MSG, UBX_MSG_LEN_PLACEHOLDER, UBX_CFG_VALGET_RESPONSE, UBX_SET_GEN_CFG_DATA, UBX_MSG_CKSUM_PLACEHOLDER };
    calculate_length_and_checksum(ubx_general_cfg_get, sizeof(ubx_general_cfg_get));
