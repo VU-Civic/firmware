@@ -347,7 +347,6 @@ static ubx_message_type_t gps_process_message(const uint8_t* msg, uint16_t max_m
             next_timestamp = tm2_to_gps_timestamp(message->wnR, message->towMsR, message->towSubMsR);
          else if (message->newFallingEdge && (message->towMsF <= 604800000))
             next_timestamp = tm2_to_gps_timestamp(message->wnF, message->towMsF, message->towSubMsF) - (1.0 / AUDIO_NUM_DMAS_PER_CLIP);
-         gps_set_led_status(0);
       }
       return UBX_TIM_TM2;
    }
