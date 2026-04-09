@@ -80,11 +80,11 @@ void *_sbrk(ptrdiff_t incr)
 
 // ARM Cortex Processor Interrupt and Exception Handlers ---------------------------------------------------------------
 
-void NMI_Handler(void) { while(1); }
-void HardFault_Handler(void) { while (1); }
-void MemManage_Handler(void) { while (1); }
-void BusFault_Handler(void) { while (1); }
-void UsageFault_Handler(void) { while (1); }
+void NMI_Handler(void) { chip_reset(); }
+void HardFault_Handler(void) { chip_reset(); }
+void MemManage_Handler(void) { chip_reset(); }
+void BusFault_Handler(void) { chip_reset(); }
+void UsageFault_Handler(void) { chip_reset(); }
 void SVC_Handler(void) {}
 void DebugMon_Handler(void) {}
 void PendSV_Handler(void) {}
@@ -115,6 +115,11 @@ void EXTI9_5_IRQHandler(void)
 
 void chip_reset(void)
 {
+   // Ensure the GPS LED turns off upon reset
+#ifdef CORE_CM4
+   WRITE_REG(LED_GPS_STATUS_GPIO_Port->BSRR, (uint32_t)LED_GPS_STATUS_Pin << 16U);
+#endif
+
    // Fully reset both cores
    NVIC_SystemReset();
 }
