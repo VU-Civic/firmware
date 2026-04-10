@@ -268,7 +268,7 @@ static uint8_t gps_rx_buffer[GPS_RX_BUFFER_SIZE_FULL];
 
 static volatile float lat_degrees = -1000.0f, lon_degrees = -1000.0f, height_meters = -1000.0f;
 static volatile uint8_t gps_timepulse_fired = 0;
-static volatile double next_timestamp = 0.0;
+static volatile double new_clip_timestamp = 0.0;
 
 
 // Private Helper Functions --------------------------------------------------------------------------------------------
@@ -341,12 +341,12 @@ static ubx_message_type_t gps_process_message(const uint8_t* msg, uint16_t max_m
    else if ((msg[UBX_MSG_CLASS_OFFSET] == 0x0D) && (msg[UBX_MSG_ID_OFFSET] == 0x03) && (msg_len == sizeof(ubx_tim_tm2_t)))
    {
       const ubx_tim_tm2_t *message = (const ubx_tim_tm2_t*)(msg + UBX_MSG_PAYLOAD_OFFSET);
-      if (message->time && (next_timestamp < 100.0))
+      if (message->time && (new_clip_timestamp < 100.0))
       {
          if (message->newRisingEdge && (message->towMsR <= 604800000))
-            next_timestamp = tm2_to_gps_timestamp(message->wnR, message->towMsR, message->towSubMsR);
+            new_clip_timestamp = tm2_to_gps_timestamp(message->wnR, message->towMsR, message->towSubMsR);
          else if (message->newFallingEdge && (message->towMsF <= 604800000))
-            next_timestamp = tm2_to_gps_timestamp(message->wnF, message->towMsF, message->towSubMsF) - (1.0 / AUDIO_NUM_DMAS_PER_CLIP);
+            new_clip_timestamp = tm2_to_gps_timestamp(message->wnF, message->towMsF, message->towSubMsF) - (1.0 / AUDIO_NUM_DMAS_PER_CLIP);
       }
       return UBX_TIM_TM2;
    }
@@ -812,8 +812,8 @@ void gps_update_packet_timestamp(uint8_t interpolate)
    }
    else
    {
-      data.packets[0].timestamp = data.packets[1].timestamp = 1.0 + next_timestamp;
-      next_timestamp = 0.0;
+      data.packets[0].timestamp = data.packets[1].timestamp = new_clip_timestamp + 1.0 - (1.0 / AUDIO_NUM_DMAS_PER_CLIP);
+      new_clip_timestamp = 0.0;
    }
 }
 
