@@ -52,9 +52,12 @@ all: directories $(EXECUTABLE) secondary-outputs
 debug: CFLAGS += -g3 -DDEBUG -O0
 debug: directories $(EXECUTABLE) secondary-outputs
 
-sd: CFLAGS += -Ofast
-sd: DEFINES += -DPACKET_FULL_AUDIO
-sd: directories $(SD_EXECUTABLE)
+sd1: CFLAGS += -Ofast
+sd1: directories $(SD_EXECUTABLE)
+
+sd4: CFLAGS += -Ofast
+sd4: DEFINES += -DPACKET_FULL_AUDIO
+sd4: directories $(SD_EXECUTABLE)
 
 test: CFLAGS += -Ofast
 test: DEFINES += -DPERIPHERAL_TESTS
@@ -94,10 +97,13 @@ clean:
 flash: all
 	$(FLASH) -c port=SWD mode=UR -d $(EXECUTABLE) 0x08100000 -v
 
-flashsd: sd
+flashsd1: sd1
+	$(FLASH) -c port=SWD mode=UR -d $(SD_EXECUTABLE) 0x08100000 -v
+
+flashsd4: sd4
 	$(FLASH) -c port=SWD mode=UR -d $(SD_EXECUTABLE) 0x08100000 -v
 
 flashtest: test
 	$(FLASH) -c port=SWD mode=UR -d $(TEST_EXECUTABLE) 0x08100000 -v
 
-.PHONY: all debug sd test directories secondary-outputs clean flash flashsd flashtest
+.PHONY: all debug sd1 sd4 test directories secondary-outputs clean flash flashsd1 flashsd4 flashtest

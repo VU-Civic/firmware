@@ -8,9 +8,6 @@ SIZE_OUTPUT := default.size.stdout
 OBJDUMP_LIST := $(BUILD)/$(TARGET).list
 LINKER_FILE := STM32H745ZITX_FLASH.ld
 
-SD_TARGET := SD_$(TARGET)
-SD_EXECUTABLE := $(BUILD)/$(SD_TARGET).elf
-
 TEST_TARGET := Test_$(TARGET)
 TEST_EXECUTABLE := $(BUILD)/$(TEST_TARGET).elf
 
@@ -52,9 +49,9 @@ all: directories $(EXECUTABLE) secondary-outputs
 debug: CFLAGS += -g3 -DDEBUG -O0
 debug: directories $(EXECUTABLE) secondary-outputs
 
-sd: CFLAGS += -Ofast
-sd: DEFINES += -DPACKET_FULL_AUDIO
-sd: directories $(SD_EXECUTABLE)
+full: CFLAGS += -Ofast
+full: DEFINES += -DPACKET_FULL_AUDIO
+full: directories $(EXECUTABLE) secondary-outputs
 
 test: CFLAGS += -Ofast
 test: DEFINES += -DPERIPHERAL_TESTS
@@ -68,9 +65,6 @@ $(BUILD):
 secondary-outputs: $(SIZE_OUTPUT) $(OBJDUMP_LIST)
 
 $(EXECUTABLE) $(MAP_FILE): $(OBJECTS) $(BUILD)/main.o
-	$(CC) -o $@ -T$(LINKER_FILE) $^ $(LFLAGS)
-
-$(SD_EXECUTABLE): $(OBJECTS) $(BUILD)/sdcard.o
 	$(CC) -o $@ -T$(LINKER_FILE) $^ $(LFLAGS)
 
 $(TEST_EXECUTABLE): $(OBJECTS) $(BUILD)/manufacturing.o
@@ -94,10 +88,7 @@ clean:
 flash: all
 	$(FLASH) -c port=SWD mode=UR -d $(EXECUTABLE) 0x08000000 -v
 
-flashsd: sd
-	$(FLASH) -c port=SWD mode=UR -d $(SD_EXECUTABLE) 0x08000000 -v
-
 flashtest: test
 	$(FLASH) -c port=SWD mode=UR -d $(TEST_EXECUTABLE) 0x08000000 -v
 
-.PHONY: all debug sd test directories secondary-outputs clean flash flashsd flashtest
+.PHONY: all debug full test directories secondary-outputs clean flash flashtest

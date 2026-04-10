@@ -69,6 +69,7 @@ int main(void)
    gps_init();
    cell_init();
    ai_comms_init();
+   opusenc_init();
 
    // Start user peripherals
    imu_start();
