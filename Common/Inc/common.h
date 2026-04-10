@@ -61,13 +61,9 @@
 #define MIC_CH1_CH3_OFFSET                   { 0.065f,   0.0f }
 #define MIC_CH1_CH4_OFFSET                   { 0.065f, 0.065f }
 
-#define MIN_MS_BETWEEN_ONSETS                50
-#define MAX_NUM_ONSETS                       (2 + (1000 / MIN_MS_BETWEEN_ONSETS))
-
 #define AI_FIRMWARE_VERSION_LENGTH           8
 #define AI_NUM_CLASSES                       1
 
-#define MAX_NUM_ONSETS_PER_CLIP              3
 #define MAX_NUM_EVENTS_PER_ALERT             AUDIO_NUM_DMAS_PER_CLIP
 
 #ifdef PACKET_FULL_AUDIO
@@ -102,6 +98,8 @@
 #define DMA_STREAM1_5_INDEX                  6U
 #define DMA_STREAM2_6_INDEX                  16U
 #define DMA_STREAM3_7_INDEX                  22U
+
+#define CORE_TO_CORE_HSEM_NUMBER             1U
 
 
 // Global Type Definitions ---------------------------------------------------------------------------------------------
@@ -164,7 +162,9 @@ typedef struct __attribute__ ((__packed__, aligned (16)))
    char imei[CELL_IMEI_LENGTH+1], imsi[CELL_IMSI_LENGTH+1];
    ai_config_t ai_config;
    channel_alarms_t channel_alarms;
-   uint8_t reserved[5];
+   uint8_t onset_detected;
+   double onset_timestamp;
+   uint8_t reserved[12];
    uint8_t end_delimiter[4];
 } data_packet_t;
 
@@ -206,12 +206,6 @@ typedef struct __attribute__ ((__packed__, aligned (4)))
    uint8_t device_id[7], clip_id, message_idx_and_final;
    uint8_t data[CELL_EVIDENCE_MAX_PAYLOAD_SIZE];
 } evidence_message_t;
-
-typedef struct
-{
-   uint32_t num_onsets;
-   int32_t indices[MAX_NUM_ONSETS_PER_CLIP];
-} onset_details_t;
 
 typedef enum
 {

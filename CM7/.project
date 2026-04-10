@@ -225,6 +225,11 @@
 			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/StatisticsFunctions/arm_absmin_no_idx_f32.c</locationURI>
 		</link>
 		<link>
+			<name>Drivers/CMSIS_DSP/Source/StatisticsFunctions/arm_accumulate_f32.c</name>
+			<type>1</type>
+			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/StatisticsFunctions/arm_accumulate_f32.c</locationURI>
+		</link>
+		<link>
 			<name>Drivers/CMSIS_DSP/Source/StatisticsFunctions/arm_max_no_idx_f32.c</name>
 			<type>1</type>
 			<locationURI>PARENT-1-PROJECT_LOC/Drivers/CMSIS_DSP/Source/StatisticsFunctions/arm_max_no_idx_f32.c</locationURI>
