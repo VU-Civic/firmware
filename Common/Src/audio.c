@@ -98,26 +98,36 @@ void MDMA_IRQHandler(void)
    // Ensure that the interrupt is relevant to this CPU
    if (READ_BIT(MDMA_Channel0->CISR, (MDMA_FLAG_TE | MDMA_FLAG_BRT)))
    {
-      // Clear the interrupt
+      // Clear the interrupt and store the audio packet timestamp
       WRITE_REG(MDMA_Channel0->CIFCR, (MDMA_FLAG_TE | MDMA_FLAG_BRT));
+      const double packet_timestamp = data.packets[data.audio_read_index].timestamp + (1.0 / AUDIO_NUM_DMAS_PER_CLIP);
 
       // Store metadata to indicate when full clips have been received
       data.audio_read_index = (READ_BIT(DMA1_Stream0->CR, DMA_SxCR_CT) == 0U);
       data.audio_clip_complete = READ_BIT(GPS_TIME_TRIGGER_GPIO_Port->IDR, GPS_TIME_TRIGGER_Pin);
-      data.packets[data.audio_read_index].channel_alarms.alarm.ch1 = ((audio_data[data.audio_read_index][0][0] == 0) || (audio_data[data.audio_read_index][0][0] == -1)) && ((audio_data[data.audio_read_index][0][1] == 0) || (audio_data[data.audio_read_index][0][1] == -1));
-      data.packets[data.audio_read_index].channel_alarms.alarm.ch2 = ((audio_data[data.audio_read_index][1][0] == 0) || (audio_data[data.audio_read_index][1][0] == -1)) && ((audio_data[data.audio_read_index][1][1] == 0) || (audio_data[data.audio_read_index][1][1] == -1));
-      data.packets[data.audio_read_index].channel_alarms.alarm.ch3 = ((audio_data[data.audio_read_index][2][0] == 0) || (audio_data[data.audio_read_index][2][0] == -1)) && ((audio_data[data.audio_read_index][2][1] == 0) || (audio_data[data.audio_read_index][2][1] == -1));
-      data.packets[data.audio_read_index].channel_alarms.alarm.ch4 = ((audio_data[data.audio_read_index][3][0] == 0) || (audio_data[data.audio_read_index][3][0] == -1)) && ((audio_data[data.audio_read_index][3][1] == 0) || (audio_data[data.audio_read_index][3][1] == -1));
+
+      // Update the onset detection and channel alarm structures
+      volatile data_packet_t* const packet = &data.packets[data.audio_read_index];
+      packet->channel_alarms.alarm.ch1 = ((audio_data[data.audio_read_index][0][0] == 0) || (audio_data[data.audio_read_index][0][0] == -1)) && ((audio_data[data.audio_read_index][0][1] == 0) || (audio_data[data.audio_read_index][0][1] == -1));
+      packet->channel_alarms.alarm.ch2 = ((audio_data[data.audio_read_index][1][0] == 0) || (audio_data[data.audio_read_index][1][0] == -1)) && ((audio_data[data.audio_read_index][1][1] == 0) || (audio_data[data.audio_read_index][1][1] == -1));
+      packet->channel_alarms.alarm.ch3 = ((audio_data[data.audio_read_index][2][0] == 0) || (audio_data[data.audio_read_index][2][0] == -1)) && ((audio_data[data.audio_read_index][2][1] == 0) || (audio_data[data.audio_read_index][2][1] == -1));
+      packet->channel_alarms.alarm.ch4 = ((audio_data[data.audio_read_index][3][0] == 0) || (audio_data[data.audio_read_index][3][0] == -1)) && ((audio_data[data.audio_read_index][3][1] == 0) || (audio_data[data.audio_read_index][3][1] == -1));
+      packet->onset_detected = 0;
 
       // Initiate transfer of audio channels to the other core
       WRITE_REG(MDMA_Channel2->CBNDTR, sizeof(data.packets[0].audio) & MDMA_CBNDTR_BNDT);
       WRITE_REG(MDMA_Channel2->CSAR, (uint32_t)audio_data[data.audio_read_index][0]);
-      WRITE_REG(MDMA_Channel2->CDAR, (uint32_t)data.packets[data.audio_read_index].audio);
+      WRITE_REG(MDMA_Channel2->CDAR, (uint32_t)packet->audio);
       SET_BIT(MDMA_Channel2->CCR, (MDMA_IT_TE | MDMA_IT_BT | MDMA_CCR_EN | MDMA_CCR_SWRQ));
 
       // Feed the watchdog timer and process the newly received audio
       cpu_feed_watchdog();
-      onset_detection_invoke(audio_data[data.audio_read_index], data.packets[data.audio_read_index].channel_alarms);
+      packet->onset_timestamp = onset_detection_invoke(packet_timestamp, audio_data[data.audio_read_index], packet->channel_alarms);
+      packet->onset_detected = (packet->onset_timestamp > 0.0);
+
+      // Alert the other core that onset detection has completed
+      if ((HSEM->RLR[CORE_TO_CORE_HSEM_NUMBER] == (HSEM_CR_COREID_CURRENT | HSEM_RLR_LOCK)))
+         WRITE_REG(HSEM->R[CORE_TO_CORE_HSEM_NUMBER], HSEM_CR_COREID_CURRENT);
    }
 }
 
@@ -518,7 +528,10 @@ void audio_start(void)
 
 // Static Audio Variables ----------------------------------------------------------------------------------------------
 
-static volatile uint8_t new_audio_received, poll_gps_signal_strength;
+static volatile data_packet_t* volatile new_data_packet;
+static volatile data_packet_t* volatile last_data_packet;
+static volatile data_packet_t* volatile new_audio_packet;
+static volatile uint8_t poll_gps_signal_strength;
 static volatile uint32_t num_bad_audio_packets;
 
 
@@ -528,7 +541,7 @@ static void audio_update_channel_alarms(channel_alarms_t alarm_flags)
 {
    // Determine if there has been bad audio for awhile and we have not already tried a reboot
    device_info.channel_alarms = alarm_flags;
-   num_bad_audio_packets = (device_info.channel_alarms.alarm.ch1 && device_info.channel_alarms.alarm.ch2 && device_info.channel_alarms.alarm.ch3 && device_info.channel_alarms.alarm.ch4) ? (num_bad_audio_packets + 1) : 0;
+   num_bad_audio_packets = (alarm_flags.alarm.ch1 && alarm_flags.alarm.ch2 && alarm_flags.alarm.ch3 && alarm_flags.alarm.ch4) ? (num_bad_audio_packets + 1) : 0;
    if ((num_bad_audio_packets == (AUDIO_SILENCE_TIMEOUT_SECONDS * AUDIO_NUM_DMAS_PER_CLIP)) && !device_info.device_config.bad_audio_restart_attempted)
    {
       device_info.device_config.bad_audio_restart_attempted = 1;
@@ -552,9 +565,10 @@ void MDMA_IRQHandler(void)
    // Ensure that the interrupt is relevant to this CPU
    if (READ_BIT(MDMA_Channel2->CISR, (MDMA_FLAG_TE | MDMA_FLAG_BT)))
    {
-      // Clear the interrupt and set the new data flag
+      // Clear the interrupt and set the new data pointers
       WRITE_REG(MDMA_Channel2->CIFCR, (MDMA_FLAG_TE | MDMA_FLAG_BT));
-      new_audio_received = 1;
+      last_data_packet = &data.packets[data.audio_read_index];
+      new_audio_packet = &data.packets[data.audio_read_index];
 
       // Update packet metadata upon full clip completion
       if (data.audio_clip_complete)
@@ -563,15 +577,26 @@ void MDMA_IRQHandler(void)
          gps_update_packet_timestamp(0);
          imu_update_packet_orientation();
          cell_update_device_details();
-         audio_update_channel_alarms(data.packets[data.audio_read_index].channel_alarms);
+         audio_update_channel_alarms(new_audio_packet->channel_alarms);
       }
       else
          gps_update_packet_timestamp(1);
 
       // Transmit new audio data for external processing
-      ai_send((uint8_t*)&data.packets[data.audio_read_index], sizeof(data.packets[0]));
-      usb_send((uint8_t*)&data.packets[data.audio_read_index], sizeof(data.packets[0]));
+      ai_send((uint8_t*)new_audio_packet, sizeof(data.packets[0]));
    }
+}
+
+void HSEM2_IRQHandler(void)
+{
+   // Clear the interrupt flag
+   WRITE_REG(HSEM->C2ICR, HSEM->C2MISR);
+
+   // Transmit data over USB for external consumption
+   usb_send((uint8_t*)last_data_packet, sizeof(data.packets[0]));
+
+   // Set packet pointer to be handled on the main thread
+   new_data_packet = last_data_packet;
 }
 
 
@@ -589,12 +614,19 @@ void audio_init(void)
       data.packets[0].end_delimiter[i] = data.packets[1].end_delimiter[i] = packet_end_delimiter[i];
    data.packets[0].ai_config.audio_clip_length_seconds = data.packets[1].ai_config.audio_clip_length_seconds = device_info.device_config.audio_clip_length_seconds;
    data.packets[0].ai_config.storage_classification_threshold = data.packets[1].ai_config.storage_classification_threshold = device_info.device_config.storage_classification_threshold;
-   new_audio_received = poll_gps_signal_strength = 0;
+   new_data_packet = new_audio_packet = NULL;
+   last_data_packet = &data.packets[0];
+   poll_gps_signal_strength = 0;
    num_bad_audio_packets = 0;
 }
 
 void audio_start(void)
 {
+   // Enable core-to-core notification interrupts
+   NVIC_SetPriority(HSEM2_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 0, 0));
+   NVIC_EnableIRQ(HSEM2_IRQn);
+   SET_BIT(HSEM->C2IER, 1 << CORE_TO_CORE_HSEM_NUMBER);
+
    // Enable data transfer completion interrupts
    NVIC_SetPriority(MDMA_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 0, 0));
    NVIC_EnableIRQ(MDMA_IRQn);
@@ -603,23 +635,24 @@ void audio_start(void)
 uint8_t audio_new_data_available(void)
 {
    // Return whether there is any new unprocessed data available
-   return new_audio_received;
+   return (new_audio_packet != NULL);
 }
 
 void audio_process_new_data(cell_audio_transmit_command_t transmit_evidence)
 {
-   // Only proceed if there is new unprocessed audio data
-   if (new_audio_received)
+   // Proceed with audio processing if there is new unprocessed audio data
+   if (new_audio_packet)
    {
-      // Feed the watchdog timer
-      new_audio_received = 0;
+      // Feed the watchdog and reset the audio packet pointer
+      volatile data_packet_t* const audio_packet = new_audio_packet;
+      new_audio_packet = NULL;
       cpu_feed_watchdog();
 
 #ifndef PACKET_FULL_AUDIO
 
       // Encode the audio data
       const opus_frame_t *result_begin, *result_end;
-      opusenc_encode((int16_t*)data.packets[data.audio_read_index].audio, &result_begin, &result_end);
+      opusenc_encode((int16_t*)audio_packet->audio, &result_begin, &result_end);
 
       // Transmit historical data if new evidence transmission was requested
       if (transmit_evidence == CELL_AUDIO_TRANSMIT_BEGIN)
@@ -644,6 +677,18 @@ void audio_process_new_data(cell_audio_transmit_command_t transmit_evidence)
          poll_gps_signal_strength = 0;
          gps_poll_signal_data();
       }
+   }
+
+   // Proceed with event processing if there is new unprocessed event data
+   if (new_data_packet)
+   {
+      // Reset the data packet pointer
+      volatile data_packet_t* const data_packet = new_data_packet;
+      new_data_packet = NULL;
+
+      // TODO: Handle new onset data
+      //if (data_packet->onset_detected)
+         //data_packet->onset_timestamp;
    }
 }
 
