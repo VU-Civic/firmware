@@ -80,6 +80,7 @@ int main(void)
    while (1)
    {
       // Carry out slow processing operations
+      ai_comms_validate();
       audio_process_new_data(CELL_AUDIO_NO_TRANSMIT);
       cell_update_state();
       shot_detector_process_detections();

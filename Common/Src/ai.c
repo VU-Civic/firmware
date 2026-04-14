@@ -88,6 +88,7 @@ void I2C3_EV_IRQHandler(void)
       WRITE_REG(I2C3->ICR, (I2C_FLAG_AF | I2C_FLAG_STOPF));
 
       // Store the current shot detection results
+      ai_last_validation_time = DWT->CYCCNT;
       shot_detector_add_classification(ai_result->class_probabilities[0]);
 
       // Prepare the DMA to read the next AI detection data
@@ -310,6 +311,13 @@ uint8_t ai_comms_finalize(void)
       return 1;
    }
    return 0;
+}
+
+void ai_comms_validate(void)
+{
+   // Verify continuous successful AI communications
+   if ((DWT->CYCCNT - ai_last_validation_time) > validation_timeout)
+      chip_reset();
 }
 
 void ai_send(const uint8_t *data, uint16_t data_length)
