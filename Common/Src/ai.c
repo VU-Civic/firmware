@@ -294,12 +294,11 @@ uint8_t ai_comms_finalize(void)
    }
    else if ((DWT->CYCCNT - ai_last_validation_time) > validation_timeout)
    {
-      // TODO: RE-ENABLE THIS
-      /*if (!device_info.device_config.bad_ai_restart_attempted)
+      if (!device_info.device_config.bad_ai_restart_attempted)
       {
          device_info.device_config.bad_ai_restart_attempted = 1;
          chip_save_config();
-      }*/
+      }
       chip_reset();
    }
 
