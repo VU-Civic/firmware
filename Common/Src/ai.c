@@ -269,7 +269,7 @@ void ai_comms_start(void)
    MODIFY_REG(I2C3->CR2, I2C_CR2_NACK, ((sizeof(ai_result_t) << I2C_CR2_NBYTES_Pos) & I2C_CR2_NBYTES));
 
    // Configure the AI communication validation timeout
-   validation_timeout = SystemCoreClock * 10;
+   validation_timeout = SystemCoreClock * AI_COMMS_TIMEOUT_SECONDS;
    ai_last_validation_time = 0;
 
    // Enable incoming AI interrupts
