@@ -7,8 +7,8 @@
 
 void ai_comms_init(void);
 void ai_comms_start(void);
+uint8_t ai_comms_finalize(void);
 void ai_send(const uint8_t *data, uint16_t data_length);
-void ai_process_detections(void);
 
 #endif  // #ifdef CORE_CM4
 

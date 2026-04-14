@@ -108,10 +108,10 @@ void MDMA_IRQHandler(void)
 
       // Update the onset detection and channel alarm structures
       volatile data_packet_t* const packet = &data.packets[data.audio_read_index];
-      packet->channel_alarms.alarm.ch1 = ((audio_data[data.audio_read_index][0][0] == 0) || (audio_data[data.audio_read_index][0][0] == -1)) && ((audio_data[data.audio_read_index][0][1] == 0) || (audio_data[data.audio_read_index][0][1] == -1));
-      packet->channel_alarms.alarm.ch2 = ((audio_data[data.audio_read_index][1][0] == 0) || (audio_data[data.audio_read_index][1][0] == -1)) && ((audio_data[data.audio_read_index][1][1] == 0) || (audio_data[data.audio_read_index][1][1] == -1));
-      packet->channel_alarms.alarm.ch3 = ((audio_data[data.audio_read_index][2][0] == 0) || (audio_data[data.audio_read_index][2][0] == -1)) && ((audio_data[data.audio_read_index][2][1] == 0) || (audio_data[data.audio_read_index][2][1] == -1));
-      packet->channel_alarms.alarm.ch4 = ((audio_data[data.audio_read_index][3][0] == 0) || (audio_data[data.audio_read_index][3][0] == -1)) && ((audio_data[data.audio_read_index][3][1] == 0) || (audio_data[data.audio_read_index][3][1] == -1));
+      packet->channel_alarms.alarm.ch1 = ((audio_data[data.audio_read_index][0][0] == 0) && (audio_data[data.audio_read_index][0][1] == 0)) || ((audio_data[data.audio_read_index][0][0] == -1) && (audio_data[data.audio_read_index][0][1] == -1));
+      packet->channel_alarms.alarm.ch2 = ((audio_data[data.audio_read_index][1][0] == 0) && (audio_data[data.audio_read_index][1][1] == 0)) || ((audio_data[data.audio_read_index][1][0] == -1) && (audio_data[data.audio_read_index][1][1] == -1));
+      packet->channel_alarms.alarm.ch3 = ((audio_data[data.audio_read_index][2][0] == 0) && (audio_data[data.audio_read_index][2][1] == 0)) || ((audio_data[data.audio_read_index][2][0] == -1) && (audio_data[data.audio_read_index][2][1] == -1));
+      packet->channel_alarms.alarm.ch4 = ((audio_data[data.audio_read_index][3][0] == 0) && (audio_data[data.audio_read_index][3][1] == 0)) || ((audio_data[data.audio_read_index][3][0] == -1) && (audio_data[data.audio_read_index][3][1] == -1));
       packet->onset_detected = 0;
 
       // Initiate transfer of audio channels to the other core
@@ -522,14 +522,14 @@ void audio_start(void)
 #include "cellular.h"
 #include "gps.h"
 #include "imu.h"
+#include "shot_detector.h"
 #include "system.h"
 #include "usb.h"
 
 
 // Static Audio Variables ----------------------------------------------------------------------------------------------
 
-static volatile data_packet_t* volatile new_data_packet;
-static volatile data_packet_t* volatile last_data_packet;
+static volatile data_packet_t* volatile current_data_packet;
 static volatile data_packet_t* volatile new_audio_packet;
 static volatile uint8_t poll_gps_signal_strength;
 static volatile uint32_t num_bad_audio_packets;
@@ -567,8 +567,9 @@ void MDMA_IRQHandler(void)
    {
       // Clear the interrupt and set the new data pointers
       WRITE_REG(MDMA_Channel2->CIFCR, (MDMA_FLAG_TE | MDMA_FLAG_BT));
-      last_data_packet = &data.packets[data.audio_read_index];
+      current_data_packet = &data.packets[data.audio_read_index];
       new_audio_packet = &data.packets[data.audio_read_index];
+      shot_detector_new_clip();
 
       // Update packet metadata upon full clip completion
       if (data.audio_clip_complete)
@@ -592,11 +593,11 @@ void HSEM2_IRQHandler(void)
    // Clear the interrupt flag
    WRITE_REG(HSEM->C2ICR, HSEM->C2MISR);
 
-   // Transmit data over USB for external consumption
-   usb_send((uint8_t*)last_data_packet, sizeof(data.packets[0]));
+   // Transmit the data over USB for external consumption
+   usb_send((uint8_t*)current_data_packet, sizeof(data.packets[0]));
 
-   // Set packet pointer to be handled on the main thread
-   new_data_packet = last_data_packet;
+   // Update any detected event onset in the shot detector
+   shot_detector_add_onset(current_data_packet->onset_detected, current_data_packet->onset_timestamp);
 }
 
 
@@ -614,10 +615,10 @@ void audio_init(void)
       data.packets[0].end_delimiter[i] = data.packets[1].end_delimiter[i] = packet_end_delimiter[i];
    data.packets[0].ai_config.audio_clip_length_seconds = data.packets[1].ai_config.audio_clip_length_seconds = device_info.device_config.audio_clip_length_seconds;
    data.packets[0].ai_config.storage_classification_threshold = data.packets[1].ai_config.storage_classification_threshold = device_info.device_config.storage_classification_threshold;
-   new_data_packet = new_audio_packet = NULL;
-   last_data_packet = &data.packets[0];
+   current_data_packet = &data.packets[0];
    poll_gps_signal_strength = 0;
    num_bad_audio_packets = 0;
+   new_audio_packet = NULL;
 }
 
 void audio_start(void)
@@ -640,7 +641,7 @@ uint8_t audio_new_data_available(void)
 
 void audio_process_new_data(cell_audio_transmit_command_t transmit_evidence)
 {
-   // Proceed with audio processing if there is new unprocessed audio data
+   // Proceed with processing if there is new audio data
    if (new_audio_packet)
    {
       // Feed the watchdog and reset the audio packet pointer
@@ -677,18 +678,6 @@ void audio_process_new_data(cell_audio_transmit_command_t transmit_evidence)
          poll_gps_signal_strength = 0;
          gps_poll_signal_data();
       }
-   }
-
-   // Proceed with event processing if there is new unprocessed event data
-   if (new_data_packet)
-   {
-      // Reset the data packet pointer
-      volatile data_packet_t* const data_packet = new_data_packet;
-      new_data_packet = NULL;
-
-      // TODO: Handle new onset data
-      //if (data_packet->onset_detected)
-         //data_packet->onset_timestamp;
    }
 }
 

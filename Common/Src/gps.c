@@ -812,7 +812,7 @@ void gps_update_packet_timestamp(uint8_t interpolate)
    }
    else
    {
-      data.packets[0].timestamp = data.packets[1].timestamp = new_clip_timestamp + 1.0 - (1.0 / AUDIO_NUM_DMAS_PER_CLIP);
+      data.packets[0].timestamp = data.packets[1].timestamp = 1.0 + new_clip_timestamp - (1.0 / AUDIO_NUM_DMAS_PER_CLIP);
       new_clip_timestamp = 0.0;
    }
 }

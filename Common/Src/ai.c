@@ -3,6 +3,7 @@
 // Header Inclusions ---------------------------------------------------------------------------------------------------
 
 #include "ai.h"
+#include "shot_detector.h"
 #include "system.h"
 
 
@@ -86,6 +87,9 @@ void I2C3_EV_IRQHandler(void)
       ai_result_write_idx = (ai_result_write_idx + 1) % 2;
       WRITE_REG(I2C3->ICR, (I2C_FLAG_AF | I2C_FLAG_STOPF));
 
+      // Store the current shot detection results
+      shot_detector_add_classification(ai_result->class_probabilities[0]);
+
       // Prepare the DMA to read the next AI detection data
       CLEAR_BIT(DMA2_Stream0->CR, DMA_SxCR_EN);
       WRITE_REG(i2c3_dma_int_registers->IFCR, i2c3_dma_int_registers->ISR);
@@ -95,32 +99,6 @@ void I2C3_EV_IRQHandler(void)
 
       // Initiate the AI data read
       MODIFY_REG(I2C3->CR2, (I2C_CR2_NACK | I2C_CR2_NBYTES), ((sizeof(ai_result_t) << I2C_CR2_NBYTES_Pos) & I2C_CR2_NBYTES));
-   }
-}
-
-
-// Helper Functions ----------------------------------------------------------------------------------------------------
-
-static void validate_ai_comms(void)
-{
-   // Validate that AI communications have not been reported erroneous for more than 10 seconds
-   if (!READ_BIT(FROM_AI_INT_GPIO_Port->IDR, FROM_AI_INT_Pin))
-   {
-      ai_last_validation_time = DWT->CYCCNT;
-      if (device_info.device_config.bad_ai_restart_attempted)
-      {
-         device_info.device_config.bad_ai_restart_attempted = 0;
-         chip_save_config();
-      }
-   }
-   else if ((DWT->CYCCNT - ai_last_validation_time) > validation_timeout)
-   {
-      if (!device_info.device_config.bad_ai_restart_attempted)
-      {
-         device_info.device_config.bad_ai_restart_attempted = 1;
-         chip_save_config();
-      }
-      chip_reset();
    }
 }
 
@@ -302,6 +280,39 @@ void ai_comms_start(void)
 #endif
 }
 
+uint8_t ai_comms_finalize(void)
+{
+   // Validate AI communications
+   if (!READ_BIT(FROM_AI_INT_GPIO_Port->IDR, FROM_AI_INT_Pin))
+   {
+      ai_last_validation_time = DWT->CYCCNT;
+      if (device_info.device_config.bad_ai_restart_attempted)
+      {
+         device_info.device_config.bad_ai_restart_attempted = 0;
+         chip_save_config();
+      }
+   }
+   else if ((DWT->CYCCNT - ai_last_validation_time) > validation_timeout)
+   {
+      // TODO: RE-ENABLE THIS
+      /*if (!device_info.device_config.bad_ai_restart_attempted)
+      {
+         device_info.device_config.bad_ai_restart_attempted = 1;
+         chip_save_config();
+      }*/
+      chip_reset();
+   }
+
+   // Store the current AI firmware version and return success
+   if (ai_result)
+   {
+      memcpy((uint8_t*)&device_info.ai_firmware_version, (uint8_t*)ai_result->ai_firmware_version, AI_FIRMWARE_VERSION_LENGTH);
+      ai_result = NULL;
+      return 1;
+   }
+   return 0;
+}
+
 void ai_send(const uint8_t *data, uint16_t data_length)
 {
    // Initiate data transfer using DMA
@@ -318,25 +329,12 @@ void ai_send(const uint8_t *data, uint16_t data_length)
    SET_BIT(SPI2->CR1, SPI_CR1_CSTART);
 }
 
-void ai_process_detections(void)
-{
-   // Validate AI communications
-   validate_ai_comms();
-
-   // Process any new AI event detections
-   if (ai_result)
-   {
-      memcpy((uint8_t*)&device_info.ai_firmware_version, (uint8_t*)ai_result->ai_firmware_version, AI_FIRMWARE_VERSION_LENGTH);
-      ai_result = NULL;
-   }
-}
-
 #else
 
 void ai_comms_init(void) {}
 void ai_comms_start(void) {}
+uint8_t ai_comms_finalize(void) { return 1; }
 void ai_send(const uint8_t *data, uint16_t data_length) {}
-void ai_process_detections(void) {}
 
 #endif  // #if REV_ID != REV_A
 

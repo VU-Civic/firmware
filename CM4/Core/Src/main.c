@@ -8,6 +8,7 @@
 #include "cellular.h"
 #include "gps.h"
 #include "imu.h"
+#include "shot_detector.h"
 #include "system.h"
 #include "usb.h"
 
@@ -60,6 +61,7 @@ int main(void)
    cell_init();
    ai_comms_init();
    opusenc_init();
+   shot_detector_init();
 
    // Start user peripherals
    imu_start();
@@ -67,17 +69,24 @@ int main(void)
    audio_start();
    cpu_init();
 
+   // Wait for AI communications to stabilize
+   while (!ai_comms_finalize())
+   {
+      audio_process_new_data(CELL_AUDIO_NO_TRANSMIT);
+      cell_update_state();
+   }
+
    // Loop forever
    while (1)
    {
       // Carry out slow processing operations
-      ai_process_detections(); // TODO: MOVE SOMEWHERE APPROPRIATE
       audio_process_new_data(CELL_AUDIO_NO_TRANSMIT); // TODO: Call with correct parameter (based on device_info.device_config...)
       cell_update_state();
+      shot_detector_process_detections();
 
       // Put the CPU to sleep if nothing left to process
       __disable_irq();
-      if (!audio_new_data_available() && !cell_pending_events())
+      if (!audio_new_data_available() && !cell_pending_events() && !shot_detector_pending_processing())
          cpu_sleep();
       __enable_irq();
    }
