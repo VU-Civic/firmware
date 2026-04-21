@@ -21,8 +21,8 @@
 #define cell_uart(t,n)                    t ## n
 
 #define CELL_TIMER_MS_PER_TICK            2U
-#define CELL_TIMER_20MS_COUNT             6U
-#define CELL_TIMER_1MIN_COUNT             256U
+#define CELL_TIMER_20MS_COUNT             5U
+#define CELL_TIMER_1MIN_COUNT             15360U
 
 #define CELL_MODEM_STATUS_BOOT_TIME_MS    16000
 #define CELL_MODEM_DEFAULT_BAUD_RATE      115200
@@ -61,6 +61,7 @@
 #define CELL_GET_SIM_CARD_ID_MSG          "AT+CCID?\r"
 #define CELL_DISABLE_RADIO_MSG            "AT+CFUN=0\r"
 #define CELL_ENABLE_RADIO_MSG             "AT+CFUN=1\r"
+#define CELL_REBOOT_RADIO_MSG             "AT+CFUN=1,1\r"
 #define CELL_GET_FW_VERSION_MSG           "AT+CGMR\r"
 #define CELL_DISABLE_ECHO_MSG             "ATE0\r"
 #define CELL_USE_NUMERIC_ERRORS_MSG       "ATV0\r"
@@ -74,6 +75,7 @@
 #define CELL_PDP_CONFIG_MSG               "AT+CGDCONT=1,\"IPV4V6\",\"" STRINGIZE(CELL_MQTT_BROKER_APN) "\"\r"
 #define CELL_INIT_BEARER_CFG_MSG          "AT+CFGDFTPDN=3,0,\"" STRINGIZE(CELL_MQTT_BROKER_APN) "\"\r"
 #define CELL_PDP_ACTIVATE_MSG             "AT+CGACT=1,1\r"
+#define CELL_PDP_DEACTIVATE_MSG           "AT+CGACT=0,1\r"
 #define CELL_POLL_PDP_ACTIVE_MSG          "AT+CGACT?\r"
 #define CELL_POLL_CGREG_MSG               "AT+CGREG?\r"
 #define CELL_POLL_CEREG_MSG               "AT+CEREG?\r"
@@ -163,9 +165,10 @@ static volatile uint8_t mqtt_result = 0, pending_messages = 0, connectivity_chan
 static volatile uint8_t cell_modem_available = 0, configure_modem = 0, mqtt_connected = 0, signal_quality = 255;
 static volatile uint8_t valid_cgreg = 0, valid_cereg = 0, valid_pdp = 0, temperature_alert = 0, reading_imsi = 0;
 static volatile uint8_t cell_busy = 0, device_info_update = 0, mqtt_configured = 0, mqtt_subscribed = 0, prompt_received = 0;
-static volatile uint8_t command_acked = 0, command_nacked = 0, timed_out = 0, in_holdoff_period = 0, device_update_timer_count = 0;
+static volatile uint8_t device_update_timer_count = 0, bad_network_conn_timer_count = 0, bad_pdp_timer_count = 0;
+static volatile uint8_t command_acked = 0, command_nacked = 0, timed_out = 0, in_holdoff_period = 0;
 static volatile char sim_id[SIM_CARD_ID_MAX_LENGTH+1], *incoming_message = 0;
-static volatile uint32_t baud_rate = 0, cme_error = 0;
+static volatile uint32_t incoming_message_length, baud_rate = 0, cme_error = 0;
 
 
 // Private Helper Functions --------------------------------------------------------------------------------------------
@@ -427,7 +430,7 @@ static uint8_t cell_mqtt_publish_alert(const alert_message_t *alert)
    // Set up the publish transfer buffer
    arm_copy_q7((q7_t*)CELL_MQTTSN_PUBLISH_ALERT_MSG, (q7_t*)publish_message_buffer, sizeof(CELL_MQTTSN_PUBLISH_ALERT_MSG));
    publish_message_buffer[MQTTSN_PUBLISH_MSG_QOS_OFFSET] = (device_info.device_config.mqtt_alert_qos > 0) ? '1' : '0';
-   const uint32_t message_len = 2 + sizeof(CELL_MQTTSN_PUBLISH_ALERT_MSG) + hex_encode_binary_data(publish_message_buffer + sizeof(CELL_MQTTSN_PUBLISH_ALERT_MSG) - 1, (const uint8_t*)alert, sizeof(alert_message_t));
+   const uint32_t message_len = 2 + sizeof(CELL_MQTTSN_PUBLISH_ALERT_MSG) + hex_encode_binary_data(publish_message_buffer + sizeof(CELL_MQTTSN_PUBLISH_ALERT_MSG) - 1, (const uint8_t*)alert, sizeof(alert_message_t) - sizeof(alert->events) + (sizeof(event_info_t) * alert->num_events));
    arm_copy_q7((q7_t*)"\"\r", (q7_t*)publish_message_buffer + message_len - 3, 2);
 
    // Issue the publish command and wait for a response
@@ -461,6 +464,7 @@ static volatile char* cell_mqtt_read(void)
    // Issue a message read request to the network
    cell_busy = 1;
    incoming_message = 0;
+   incoming_message_length = 0;
    mqtt_operation_awaiting_ack = MQTT_READ;
    if (!cell_send_command_await_response(CELL_MQTTSN_READ_MSG, sizeof(CELL_MQTTSN_READ_MSG), 16000))
       mqtt_operation_awaiting_ack = MQTT_DONE;
@@ -492,6 +496,22 @@ static void cell_reset_modem(uint8_t hard_reset)
       cpu_sleep();
 }
 
+static void cell_reboot_firmware(uint8_t pdp_reboot)
+{
+   // Reboot modem according to the requested method
+   bad_network_conn_timer_count = bad_pdp_timer_count = 0;
+   if (pdp_reboot)
+   {
+      cell_send_command_await_response(CELL_PDP_DEACTIVATE_MSG, sizeof(CELL_PDP_DEACTIVATE_MSG), 1000);
+      cell_send_command_await_response(CELL_PDP_ACTIVATE_MSG, sizeof(CELL_PDP_ACTIVATE_MSG), 40000);
+   }
+   else
+   {
+      cell_send_command_await_response(CELL_DISABLE_RADIO_MSG, sizeof(CELL_DISABLE_RADIO_MSG), 1000);
+      cell_send_command_await_response(CELL_ENABLE_RADIO_MSG, sizeof(CELL_ENABLE_RADIO_MSG), 1000);
+   }
+}
+
 static uint8_t cell_configure_modem(void)
 {
    // Poll for the SIM card ID to verify that a card is present
@@ -502,7 +522,7 @@ static uint8_t cell_configure_modem(void)
    // Always poll for the device IMEI to use as the device ID
    while ((data.packets[0].imei[0] == 0) && (data.packets[0].imei[1] == 0) && (data.packets[0].imei[2] == 0))
       for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_RETRIEVE_IMEI_MSG, sizeof(CELL_RETRIEVE_IMEI_MSG), 1000); ++retries);
-   memcpy((char*)device_info.device_id, (char*)data.packets[0].imei, CELL_IMEI_LENGTH);
+   device_info.device_id = strtoull((char*)data.packets[0].imei, NULL, 10);
 
    // Continue configuring modem if the SIM was validated
    if (sim_present)
@@ -510,7 +530,6 @@ static uint8_t cell_configure_modem(void)
       // Update all error and event reporting messages
       for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_USE_NUMERIC_MT_ERRORS_MSG, sizeof(CELL_USE_NUMERIC_MT_ERRORS_MSG), 500); ++retries);
       for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_REPORT_REG_ERRORS_MSG, sizeof(CELL_REPORT_REG_ERRORS_MSG), 500); ++retries);
-      // TODO: DO WE NEED CGREG/CEREG OR DOES CGEV GIVE US ALL WE NEED? while (!cell_send_command_await_response(CELL_REPORT_REG_EVENTS_MSG, sizeof(CELL_REPORT_REG_EVENTS_MSG), 500));
       for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_SUBSCRIBE_CGREG_MSG, sizeof(CELL_SUBSCRIBE_CGREG_MSG), 500); ++retries);
       for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_SUBSCRIBE_CEREG_MSG, sizeof(CELL_SUBSCRIBE_CEREG_MSG), 500); ++retries);
 
@@ -567,12 +586,37 @@ static uint8_t cell_configure_modem(void)
    return sim_present;
 }
 
-static void update_device_configuration(const config_data_t* new_config)
+static void update_device_configuration(volatile char* config_data, uint32_t data_length)
 {
+   // Parse the updated configuration values from the JSON message
+   config_data_t new_config = device_info.device_config;
+   while (data_length && (*config_data != '}'))
+   {
+      while (--data_length && (*(++config_data) != '"'));
+      const char* const key = (const char*)config_data + 1;
+      while (data_length && --data_length && (*(++config_data) != '"'));
+      *config_data = '\0';
+      while (data_length && --data_length && ((*(++config_data) == ':') || (*config_data == ' ') || (*config_data == '\t') || (*config_data == '"')));
+      const char* const val = (const char*)config_data;
+      while (data_length && --data_length && (*(++config_data) != '"') && (*config_data != ',') && (*config_data != '}'));
+      *config_data = '\0';
+      if (data_length)
+      {
+         if (strcmp(key, "info_qos") == 0) new_config.mqtt_device_info_qos = (uint8_t)atoi(val);
+         else if (strcmp(key, "alert_qos") == 0) new_config.mqtt_alert_qos = (uint8_t)atoi(val);
+         else if (strcmp(key, "audio_qos") == 0) new_config.mqtt_audio_qos = (uint8_t)atoi(val);
+         else if (strcmp(key, "shot_min") == 0) new_config.shot_detection_min_threshold = (uint8_t)atoi(val);
+         else if (strcmp(key, "shot_good") == 0) new_config.shot_detection_good_threshold = (uint8_t)atoi(val);
+         else if (strcmp(key, "store_thresh") == 0) new_config.storage_classification_threshold = (uint8_t)atoi(val);
+         else if (strcmp(key, "clip_sec") == 0) new_config.audio_clip_length_seconds = (uint8_t)atoi(val);
+         else if (strcmp(key, "status_min") == 0) new_config.device_status_transmission_interval_minutes = (uint8_t)atoi(val);
+      }
+   }
+
    // Update the device reporting timer if status reporting has changed
-   if (new_config->device_status_transmission_interval_minutes && !device_info.device_config.device_status_transmission_interval_minutes)
+   if (new_config.device_status_transmission_interval_minutes && !device_info.device_config.device_status_transmission_interval_minutes)
       SET_BIT(LPTIM3->CR, LPTIM_CR_CNTSTRT);
-   else if (!new_config->device_status_transmission_interval_minutes && device_info.device_config.device_status_transmission_interval_minutes)
+   else if (!new_config.device_status_transmission_interval_minutes && device_info.device_config.device_status_transmission_interval_minutes)
    {
       CLEAR_BIT(LPTIM3->CR, LPTIM_CR_ENABLE);
       while (READ_BIT(LPTIM3->CR, LPTIM_CR_ENABLE));
@@ -582,9 +626,9 @@ static void update_device_configuration(const config_data_t* new_config)
    }
 
    // Copy the new configuration to non-volatile storage
-   data.packets[0].ai_config.audio_clip_length_seconds = data.packets[1].ai_config.audio_clip_length_seconds = new_config->audio_clip_length_seconds;
-   data.packets[0].ai_config.storage_classification_threshold = data.packets[1].ai_config.storage_classification_threshold = new_config->storage_classification_threshold;
-   device_info.device_config = *new_config;
+   data.packets[0].ai_config.audio_clip_length_seconds = data.packets[1].ai_config.audio_clip_length_seconds = new_config.audio_clip_length_seconds;
+   data.packets[0].ai_config.storage_classification_threshold = data.packets[1].ai_config.storage_classification_threshold = new_config.storage_classification_threshold;
+   device_info.device_config = new_config;
    chip_save_config();
 
    // Transmit a device status message to acknowledge receipt of the configuration change request
@@ -611,9 +655,11 @@ static char* handle_mqtt_message(char* msg, uint16_t max_msg_len, uint8_t is_mqt
       msg = find_end_of_message(msg_start, &max_msg_len) + 1;
       if (mqtt_operation_awaiting_ack == MQTT_READ)
       {
-         incoming_message = msg - 3;
+         char *message_end = msg - 3;
+         incoming_message = message_end;
          while (*(--incoming_message) != ',');
-         ++incoming_message;
+         incoming_message += 2;
+         incoming_message_length = (uint32_t)(message_end - incoming_message);
          --pending_messages;
       }
       else
@@ -643,7 +689,7 @@ static uint16_t cell_process_message(char* msg, uint16_t max_msg_len)
    if (max_msg_len && (mqtt_operation_awaiting_ack == MQTT_PUBLISH_BINARY) && (*msg == '>'))
    {
       prompt_received = 1;
-      msg += 1; // TODO: DO WE ALSO RECEIVE ANY LINE ENDINGS HERE?
+      msg += 1;
    }
    else if ((max_msg_len >= sizeof(CELL_CME_ERROR_MSG)) && (memcmp(msg, CELL_CME_ERROR_MSG, sizeof(CELL_CME_ERROR_MSG) - 1) == 0))
    {
@@ -816,9 +862,21 @@ static uint16_t cell_process_message(char* msg, uint16_t max_msg_len)
    return (uint16_t)(msg - orig_msg);
 }
 
-static void cell_process_network_message(const volatile char* message)
+static void cell_process_network_message(volatile char* message, uint32_t message_length)
 {
-   // TODO: Process the message (it includes the enclosing quotation marks)
+   // Process the message depending on its type
+   if ((message_length >= (16 + CELL_IMEI_LENGTH)) && (memcmp((char*)message, "{\"type\":", 8) == 0) &&
+       (memcmp((char*)message + 10, "\"id\":", 5) == 0) && (memcmp((char*)message + 15, (char*)data.packets[0].imei, CELL_IMEI_LENGTH) == 0))
+   {
+      switch ((mqtt_device_message_t)message[8])
+      {
+         case MQTT_DEVICE_CONFIG_UPDATE:
+            update_device_configuration(message + 15 + CELL_IMEI_LENGTH, message_length - 15 - CELL_IMEI_LENGTH);
+            break;
+         default:
+            break;
+      }
+   }
 }
 
 
@@ -833,6 +891,18 @@ void LPTIM3_IRQHandler(void)
       device_update_timer_count = 0;
       device_info_update = 1;
    }
+
+   // Check whether there has been a network connectivity issue for too long
+   if (valid_cgreg || valid_cereg)
+   {
+      bad_network_conn_timer_count = 0;
+      if (valid_pdp)
+         bad_pdp_timer_count = 0;
+      else if (++bad_pdp_timer_count >= CELL_BAD_PDP_TIMEOUT_MINUTES)
+         connectivity_changed = 1;
+   }
+   else if (++bad_network_conn_timer_count >= CELL_BAD_CONN_TIMEOUT_MINUTES)
+      connectivity_changed = 1;
 }
 
 void LPTIM4_IRQHandler(void)
@@ -1148,16 +1218,19 @@ void cell_update_state(void)
       {
          // Ensure that each dependent network connection is made in order
          if (!valid_pdp)
-            cell_send_command_await_response(CELL_PDP_ACTIVATE_MSG, sizeof(CELL_PDP_ACTIVATE_MSG), 40000);
+         {
+            if (bad_pdp_timer_count >= CELL_BAD_PDP_TIMEOUT_MINUTES)
+               cell_reboot_firmware(1);
+            else
+               cell_send_command_await_response(CELL_PDP_ACTIVATE_MSG, sizeof(CELL_PDP_ACTIVATE_MSG), 40000);
+         }
          else if (!mqtt_connected)
             cell_mqtt_connect();
          else if (!mqtt_subscribed)
             cell_mqtt_subscribe();
       }
-      else
-      {
-         // TODO: USE ONE OF THE UNUSED TIMERS TO START A TRY AGAIN TIMER (IF NO CGREG||CEREG FOR X SECONDS, "AT+CFUN=0\r" then "AT+CFUN=1\r") (IF NO PDP FOR AWHILE, "AT+CGACT=0,<cid>\r" then "AT+CGACT=1,<cid>\r" maybe with cfun in between too) (IF NO MQTT WHEN ALL ELSE WORKS, TRY AGAIN PRETTY QUICKLY)
-      }
+      else if (bad_network_conn_timer_count >= CELL_BAD_CONN_TIMEOUT_MINUTES)
+         cell_reboot_firmware(0);
    }
    if (device_info_update)
    {
@@ -1168,7 +1241,7 @@ void cell_update_state(void)
       cell_mqtt_publish_device_info();
    }
    while (pending_messages)
-      cell_process_network_message(cell_mqtt_read());
+      cell_process_network_message(cell_mqtt_read(), incoming_message_length);
 }
 
 uint8_t cell_pending_events(void)
@@ -1198,7 +1271,7 @@ void cell_transmit_alert(alert_message_t *alert)
    cell_mqtt_publish_alert(alert);
 }
 
-void cell_transmit_audio(const opus_frame_t *restrict audio_frame, uint8_t is_final_frame)
+uint8_t cell_transmit_audio(const opus_frame_t *restrict audio_frame, uint8_t is_final_frame)
 {
    // Append the audio frame to the current evidence packet, sending a full packet and splitting if necessary
    static uint16_t evidence_message_idx = 0;
@@ -1219,6 +1292,7 @@ void cell_transmit_audio(const opus_frame_t *restrict audio_frame, uint8_t is_fi
    }
 
    // Send the evidence packet if full or if this is the final audio frame
+   const uint8_t transmitted_clip_id = evidence_message.clip_id;
    if (is_final_frame || (evidence_message_idx == CELL_EVIDENCE_MAX_PAYLOAD_SIZE))
    {
       // Set the "final packet" flag if necessary before sending
@@ -1235,6 +1309,7 @@ void cell_transmit_audio(const opus_frame_t *restrict audio_frame, uint8_t is_fi
       else
          evidence_message.message_idx_and_final++;
    }
+   return transmitted_clip_id;
 }
 
 uint8_t cell_is_busy(void)
