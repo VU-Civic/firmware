@@ -67,7 +67,7 @@
 #define AI_NUM_CLASSES                       1
 #define AI_COMMS_TIMEOUT_SECONDS             10
 
-#define MAX_NUM_EVENTS_PER_ALERT             AUDIO_NUM_DMAS_PER_CLIP
+#define MAX_NUM_EVENTS_PER_ALERT             (2 * AUDIO_NUM_DMAS_PER_CLIP)
 
 #ifdef PACKET_FULL_AUDIO
 #define PACKET_AUDIO_SAMPLES                 AUDIO_BUFFER_SAMPLES

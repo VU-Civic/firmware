@@ -77,13 +77,14 @@ int main(void)
    }
 
    // Loop forever
+   cell_audio_transmit_command_t audio_transmit_command = CELL_AUDIO_NO_TRANSMIT;
    while (1)
    {
       // Carry out slow processing operations
       ai_comms_validate();
-      const uint8_t clip_id = audio_process_new_data(CELL_AUDIO_NO_TRANSMIT); // TODO: Call with correct parameter (based on device_info.device_config...)
+      const uint8_t clip_id = audio_process_new_data(audio_transmit_command);
+      audio_transmit_command = shot_detector_process_detections(clip_id);
       cell_update_state();
-      shot_detector_process_detections(clip_id);
 
       // Put the CPU to sleep if nothing left to process
       __disable_irq();

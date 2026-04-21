@@ -533,6 +533,7 @@ static volatile data_packet_t* volatile current_data_packet;
 static volatile data_packet_t* volatile new_audio_packet;
 static volatile uint8_t poll_gps_signal_strength;
 static volatile uint32_t num_bad_audio_packets;
+static uint8_t clip_id;
 
 
 // Private Helper Functions --------------------------------------------------------------------------------------------
@@ -619,6 +620,7 @@ void audio_init(void)
    poll_gps_signal_strength = 0;
    num_bad_audio_packets = 0;
    new_audio_packet = NULL;
+   clip_id = 0;
 }
 
 void audio_start(void)
@@ -642,7 +644,6 @@ uint8_t audio_new_data_available(void)
 uint8_t audio_process_new_data(cell_audio_transmit_command_t transmit_evidence)
 {
    // Proceed with processing if there is new audio data
-   uint8_t clip_id = 0;
    if (new_audio_packet)
    {
       // Feed the watchdog and reset the audio packet pointer
