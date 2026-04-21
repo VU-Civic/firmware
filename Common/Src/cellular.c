@@ -1275,6 +1275,12 @@ void cell_transmit_alert(alert_message_t *alert)
    device_update_timer_count = 0;
    alert->cell_signal_power = signal_power;
    alert->cell_signal_quality = signal_quality;
+   alert->sensor_q1 = device_info.q1;
+   alert->sensor_q2 = device_info.q2;
+   alert->sensor_q3 = device_info.q3;
+   alert->sensor_lat = device_info.lat;
+   alert->sensor_lon = device_info.lon;
+   alert->sensor_ht = device_info.ht;
    cell_mqtt_publish_alert(alert);
 }
 
