@@ -122,7 +122,7 @@ void MDMA_IRQHandler(void)
 
       // Feed the watchdog timer and process the newly received audio
       cpu_feed_watchdog();
-      packet->onset_timestamp = onset_detection_invoke(packet_timestamp, audio_data[data.audio_read_index], packet->channel_alarms);
+      packet->onset_timestamp = onset_detection_invoke(packet_timestamp, audio_data[data.audio_read_index], packet);
       packet->onset_detected = (packet->onset_timestamp > 0.0);
 
       // Alert the other core that onset detection has completed
@@ -597,7 +597,7 @@ void HSEM2_IRQHandler(void)
    usb_send((uint8_t*)current_data_packet, sizeof(data.packets[0]));
 
    // Update any detected event onset in the shot detector
-   shot_detector_add_onset(current_data_packet->onset_detected, current_data_packet->onset_timestamp);
+   shot_detector_add_onset(current_data_packet);
 }
 
 
@@ -639,9 +639,10 @@ uint8_t audio_new_data_available(void)
    return (new_audio_packet != NULL);
 }
 
-void audio_process_new_data(cell_audio_transmit_command_t transmit_evidence)
+uint8_t audio_process_new_data(cell_audio_transmit_command_t transmit_evidence)
 {
    // Proceed with processing if there is new audio data
+   uint8_t clip_id = 0;
    if (new_audio_packet)
    {
       // Feed the watchdog and reset the audio packet pointer
@@ -660,7 +661,7 @@ void audio_process_new_data(cell_audio_transmit_command_t transmit_evidence)
       {
          const opus_frame_t *history_start = opusenc_get_history(), *frame = opusenc_get_history();
          do {
-            cell_transmit_audio(frame, 0);
+            clip_id = cell_transmit_audio(frame, 0);
             frame = frame->next;
          } while (frame != history_start);
       }
@@ -668,7 +669,7 @@ void audio_process_new_data(cell_audio_transmit_command_t transmit_evidence)
       // Optionally transmit the newly encoded data over the cellular network
       if (transmit_evidence != CELL_AUDIO_NO_TRANSMIT)
          for (const opus_frame_t *frame = result_begin; frame != result_end; frame = frame->next)
-            cell_transmit_audio(frame, (transmit_evidence == CELL_AUDIO_TRANSMIT_END) && (frame->next == result_end));
+            clip_id = cell_transmit_audio(frame, (transmit_evidence == CELL_AUDIO_TRANSMIT_END) && (frame->next == result_end));
 
 #endif  // #ifndef PACKET_FULL_AUDIO
 
@@ -679,6 +680,7 @@ void audio_process_new_data(cell_audio_transmit_command_t transmit_evidence)
          gps_poll_signal_data();
       }
    }
+   return clip_id;
 }
 
 #endif  // #ifdef CORE_CM7

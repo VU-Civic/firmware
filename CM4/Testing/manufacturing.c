@@ -81,9 +81,9 @@ int main(void)
    {
       // Carry out slow processing operations
       ai_comms_validate();
-      audio_process_new_data(CELL_AUDIO_NO_TRANSMIT);
+      const uint8_t clip_id = audio_process_new_data(CELL_AUDIO_NO_TRANSMIT);
       cell_update_state();
-      shot_detector_process_detections();
+      shot_detector_process_detections(clip_id);
 
       // Put the CPU to sleep if nothing left to process
       __disable_irq();
