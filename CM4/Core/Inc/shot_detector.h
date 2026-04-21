@@ -7,10 +7,10 @@
 
 void shot_detector_init(void);
 void shot_detector_new_clip(void);
-void shot_detector_add_onset(uint8_t onset_detected, double onset_timestamp);
+void shot_detector_add_onset(volatile data_packet_t* volatile packet);
 void shot_detector_add_classification(uint8_t gunshot_probability);
 uint8_t shot_detector_pending_processing(void);
-void shot_detector_process_detections(void);
+void shot_detector_process_detections(uint8_t audio_clip_id);
 
 #endif  // #ifdef CORE_CM4
 

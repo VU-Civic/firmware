@@ -288,11 +288,12 @@ void onset_detection_init(void)
    flux_warmup_count = 0;
 }
 
-double onset_detection_invoke(double packet_timestamp, const int16_t (*audio_samples)[AUDIO_BUFFER_SAMPLES_PER_CHANNEL], channel_alarms_t channel_alarms)
+double onset_detection_invoke(double packet_timestamp, const int16_t (*audio_samples)[AUDIO_BUFFER_SAMPLES_PER_CHANNEL], volatile data_packet_t* const packet)
 {
    // Use the first audio channel that is not in an alarm state
    double onset_timestamp = 0.0;
-   const int16_t *audio_packet = !channel_alarms.alarm.ch1 ? audio_samples[0] : (!channel_alarms.alarm.ch2 ? audio_samples[1] : (!channel_alarms.alarm.ch3 ? audio_samples[2] : audio_samples[3]));
+   packet->onset_magnitude = packet->angle_of_arrival[0] = packet->angle_of_arrival[1] = packet->angle_of_arrival[2] = 0.0f;
+   const int16_t *audio_packet = !packet->channel_alarms.alarm.ch1 ? audio_samples[0] : (!packet->channel_alarms.alarm.ch2 ? audio_samples[1] : (!packet->channel_alarms.alarm.ch3 ? audio_samples[2] : audio_samples[3]));
 
    // Process the audio windows that straddle the previous and current packets
    for (int m = 0; m < MISSING_WINDOWS_PER_PACKET; ++m)
@@ -321,7 +322,7 @@ double onset_detection_invoke(double packet_timestamp, const int16_t (*audio_sam
    arm_copy_q15(audio_packet + (AVAILABLE_WINDOWS_PER_PACKET * FFT_STEP_SIZE), pending_buf, AUDIO_PACKET_NUM_SAMPLES - (AVAILABLE_WINDOWS_PER_PACKET * FFT_STEP_SIZE));
 
    // TODO: Calculate the angle of arrival for each detected onset (unless a channel is in an alarm state)
-   /*if (!channel_alarms.alarms)
+   /*if (!packet->channel_alarms.alarms)
       for (uint32_t i = 0; i < onsets.num_onsets; ++i)
       {
          const int32_t onset = onsets.indices[i];

@@ -28,6 +28,8 @@
 #define AUDIO_NUM_DMAS_PER_CLIP              (AUDIO_SAMPLE_RATE_HZ * AUDIO_NUM_CHANNELS / AUDIO_BUFFER_SAMPLES)
 
 #define CELL_CONNECTION_TIMEOUT_SECONDS      65520
+#define CELL_BAD_CONN_TIMEOUT_MINUTES        10
+#define CELL_BAD_PDP_TIMEOUT_MINUTES         2
 #define CELL_SERVER_RESPONSE_TIMEOUT_SECONDS 5
 #define CELL_IMEI_LENGTH                     15
 #define CELL_IMSI_LENGTH                     15
@@ -165,6 +167,8 @@ typedef struct __attribute__ ((__packed__, aligned (16)))
    channel_alarms_t channel_alarms;
    uint8_t onset_detected;
    double onset_timestamp;
+   float onset_magnitude;
+   float angle_of_arrival[3];
    uint8_t reserved[12];
    uint8_t end_delimiter[4];
 } data_packet_t;
@@ -177,12 +181,13 @@ typedef struct __attribute__ ((__packed__, aligned (16)))
 
 typedef struct __attribute__ ((__packed__, aligned (4)))
 {
-   char device_id[CELL_IMEI_LENGTH+1], imsi[CELL_IMSI_LENGTH+1];
+   uint64_t device_id;
+   char imsi[CELL_IMSI_LENGTH+1];
    uint8_t firmware_version[FIRMWARE_VERSION_LENGTH];
    uint8_t ai_firmware_version[AI_FIRMWARE_VERSION_LENGTH];
    float lat, lon, ht;
    int32_t q1, q2, q3;
-   uint8_t signal_power, signal_quality;
+   uint8_t signal_power, signal_quality, reserved;
    channel_alarms_t channel_alarms;
    config_data_t device_config;
 } device_info_t;
@@ -190,15 +195,15 @@ typedef struct __attribute__ ((__packed__, aligned (4)))
 typedef struct __attribute__ ((__packed__))
 {
    double timestamp;
-   float confidence, angle_of_arrival[3];
+   float confidence, magnitude, angle_of_arrival[3];
 } event_info_t;
 
 typedef struct __attribute__ ((__packed__, aligned (4)))
 {
-   char device_id[CELL_IMEI_LENGTH+1];
+   uint64_t device_id;
    int32_t sensor_q1, sensor_q2, sensor_q3;
    float sensor_lat, sensor_lon, sensor_ht;
-   uint8_t num_events, cell_signal_power, cell_signal_quality;
+   uint8_t audio_clip_id, num_events, cell_signal_power, cell_signal_quality;
    event_info_t events[MAX_NUM_EVENTS_PER_ALERT];
 } alert_message_t;
 
@@ -207,6 +212,11 @@ typedef struct __attribute__ ((__packed__, aligned (4)))
    uint8_t device_id[7], clip_id, message_idx_and_final;
    uint8_t data[CELL_EVIDENCE_MAX_PAYLOAD_SIZE];
 } evidence_message_t;
+
+typedef enum
+{
+   MQTT_DEVICE_CONFIG_UPDATE = '1'
+} mqtt_device_message_t;
 
 typedef enum
 {
