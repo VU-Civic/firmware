@@ -589,6 +589,7 @@ static uint8_t cell_configure_modem(void)
 static void update_device_configuration(volatile char* config_data, uint32_t data_length)
 {
    // Parse the updated configuration values from the JSON message
+   uint8_t correct_device_intent = 0;
    config_data_t new_config = device_info.device_config;
    while (data_length && (*config_data != '}'))
    {
@@ -602,7 +603,8 @@ static void update_device_configuration(volatile char* config_data, uint32_t dat
       *config_data = '\0';
       if (data_length)
       {
-         if (strcmp(key, "info_qos") == 0) new_config.mqtt_device_info_qos = (uint8_t)atoi(val);
+         if ((strcmp(key, "id") == 0) && (((val[0] == 'a') && (val[1] == 'l') && (val[2] == 'l')) || (strtoull(val, NULL, 10) == device_info.device_id))) correct_device_intent = 1;
+         else if (strcmp(key, "info_qos") == 0) new_config.mqtt_device_info_qos = (uint8_t)atoi(val);
          else if (strcmp(key, "alert_qos") == 0) new_config.mqtt_alert_qos = (uint8_t)atoi(val);
          else if (strcmp(key, "audio_qos") == 0) new_config.mqtt_audio_qos = (uint8_t)atoi(val);
          else if (strcmp(key, "shot_min") == 0) new_config.shot_detection_min_threshold = (uint8_t)atoi(val);
@@ -612,6 +614,10 @@ static void update_device_configuration(volatile char* config_data, uint32_t dat
          else if (strcmp(key, "status_min") == 0) new_config.device_status_transmission_interval_minutes = (uint8_t)atoi(val);
       }
    }
+
+   // Do not update if this message was intended for a different device
+   if (!correct_device_intent)
+      return;
 
    // Update the device reporting timer if status reporting has changed
    if (new_config.device_status_transmission_interval_minutes && !device_info.device_config.device_status_transmission_interval_minutes)
@@ -865,13 +871,14 @@ static uint16_t cell_process_message(char* msg, uint16_t max_msg_len)
 static void cell_process_network_message(volatile char* message, uint32_t message_length)
 {
    // Process the message depending on its type
-   if ((message_length >= (16 + CELL_IMEI_LENGTH)) && (memcmp((char*)message, "{\"type\":", 8) == 0) &&
-       (memcmp((char*)message + 10, "\"id\":", 5) == 0) && (memcmp((char*)message + 15, (char*)data.packets[0].imei, CELL_IMEI_LENGTH) == 0))
+   if ((message_length >= (16 + CELL_IMEI_LENGTH)) && (memcmp((char*)message, "{\"type\"", 7) == 0))
    {
-      switch ((mqtt_device_message_t)message[8])
+      volatile char *type_start = message + 7;
+      while ((*(++type_start) == ':') || (*type_start == ' ') || (*type_start == '\t') || (*type_start == '"'));
+      switch ((mqtt_device_message_t)(*type_start))
       {
          case MQTT_DEVICE_CONFIG_UPDATE:
-            update_device_configuration(message + 15 + CELL_IMEI_LENGTH, message_length - 15 - CELL_IMEI_LENGTH);
+            update_device_configuration(message, message_length);
             break;
          default:
             break;
