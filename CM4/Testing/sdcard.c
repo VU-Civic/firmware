@@ -17,7 +17,7 @@
 
 #define DEVICE_STATUS_UPDATE_INTERVAL_MINUTES                  5
 #define STORAGE_AUDIO_CLIP_MIN_SECONDS                         60
-#define STORAGE_PROBABILITY_THRESHOLD                          0
+#define STORAGE_PROBABILITY_THRESHOLD                          -100.0f
 
 
 // Main Application Function -------------------------------------------------------------------------------------------
@@ -92,8 +92,8 @@ int main(void)
       // Carry out slow processing operations
       ai_comms_validate();
       const uint8_t clip_id = audio_process_new_data(CELL_AUDIO_NO_TRANSMIT);
-      cell_update_state();
       shot_detector_process_detections(clip_id);
+      cell_update_state();
 
       // Put the CPU to sleep if nothing left to process
       __disable_irq();

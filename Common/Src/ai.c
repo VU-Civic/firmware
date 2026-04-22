@@ -89,7 +89,7 @@ void I2C3_EV_IRQHandler(void)
 
       // Store the current shot detection results
       ai_last_validation_time = DWT->CYCCNT;
-      shot_detector_add_classification(ai_result->class_probabilities[0]);
+      shot_detector_add_classification(ai_result->class_outputs[0]);
 
       // Prepare the DMA to read the next AI detection data
       CLEAR_BIT(DMA2_Stream0->CR, DMA_SxCR_EN);

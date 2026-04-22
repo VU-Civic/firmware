@@ -9,16 +9,16 @@
 typedef struct
 {
    double onset_timestamp;
-   float onset_magnitude, onset_aoa[3];
-   uint8_t onset_detected, gunshot_probability;
-   uint8_t onset_info_received, gunshot_info_received;
+   float onset_magnitude, onset_aoa[3], gunshot_classification;
+   uint8_t onset_detected, onset_info_received, gunshot_info_received;
    uint8_t detection_handled;
 } detection_info_t;
 
 static volatile detection_info_t detection_info[AUDIO_NUM_DMAS_PER_CLIP];
-static uint8_t incident_occurring, incident_packets_received, max_confidence;
+static uint8_t incident_occurring, incident_packets_received;
 static cell_audio_transmit_command_t audio_transmit_command;
 static alert_message_t alert_message;
+static float max_classification;
 
 
 // Private Helper Functions --------------------------------------------------------------------------------------------
@@ -65,10 +65,10 @@ void shot_detector_add_onset(volatile data_packet_t* volatile packet)
    detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].onset_info_received = 1;
 }
 
-void shot_detector_add_classification(uint8_t gunshot_probability)
+void shot_detector_add_classification(float gunshot_classification)
 {
    // Add classification information to the end of the detection data
-   detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_probability = gunshot_probability;
+   detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_classification= gunshot_classification;
    detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_info_received = 1;
 }
 
@@ -89,33 +89,34 @@ cell_audio_transmit_command_t shot_detector_process_detections(uint8_t audio_cli
       uint8_t gunshot_detected = 0;
       for (uint32_t i = 0; i < AUDIO_NUM_DMAS_PER_CLIP; ++i)
          gunshot_detected |= detection_info[i].onset_detected;
-      gunshot_detected &= (detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_probability >= device_info.device_config.shot_detection_good_threshold);  // TODO: device_info.device_config.shot_detection_min_threshold;
+      gunshot_detected &= (detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_classification >= device_info.device_config.shot_detection_min_threshold);  // TODO: device_info.device_config.shot_detection_good_threshold for evidence?;
 
       // Accumulate evidence during an active incident, sending alerts once per full clip
       if (incident_occurring)
       {
          audio_transmit_command = CELL_AUDIO_TRANSMIT_CONTINUE;
-         max_confidence = (max_confidence > detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_probability) ? max_confidence : detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_probability;
+         max_classification = (max_classification > detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_classification) ? max_classification : detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_classification;
          if (detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].onset_detected)
             fill_detection_event(&alert_message.events[alert_message.num_events++], &detection_info[AUDIO_NUM_DMAS_PER_CLIP-1]);
          if (++incident_packets_received >= AUDIO_NUM_DMAS_PER_CLIP)
          {
             for (uint8_t i = 0; i < alert_message.num_events; ++i)
-               alert_message.events[i].confidence = (float)max_confidence; // TODO: All confidence- and threshold-related values need to be updated to match actual classifier output
+               alert_message.events[i].confidence = max_classification;
             alert_message.audio_clip_id = audio_clip_id;
-            incident_occurring = (max_confidence >= device_info.device_config.shot_detection_good_threshold) ? alert_message.num_events : 0;
+            incident_occurring = (max_classification >= device_info.device_config.shot_detection_min_threshold) ? alert_message.num_events : 0;
             if (incident_occurring)
                cell_transmit_alert(&alert_message);
             else
                audio_transmit_command = CELL_AUDIO_TRANSMIT_END;
-            alert_message.num_events = max_confidence = incident_packets_received = 0;
+            alert_message.num_events = incident_packets_received = 0;
+            max_classification = 0.0f;
          }
       }
       else if (gunshot_detected)
       {
          // Add detected onsets from any point in the most recent audio clip
          alert_message.num_events = 0;
-         max_confidence = detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_probability;
+         max_classification = detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_classification;
          for (uint32_t i = 0; i < AUDIO_NUM_DMAS_PER_CLIP; ++i)
             if (detection_info[i].onset_detected)
                fill_detection_event(&alert_message.events[alert_message.num_events++], &detection_info[i]);

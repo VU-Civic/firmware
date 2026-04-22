@@ -87,12 +87,12 @@
   #define MAX(a, b)                          (((a) > (b)) ? (a) : (b))
 #endif
 
-#define DEFAULT_CONFIG_INITIALIZATION_TAG                         85
+#define DEFAULT_CONFIG_INITIALIZATION_TAG                         84
 #define DEFAULT_DEVICE_STATUS_UPDATE_INTERVAL_MINUTES             15
 #define DEFAULT_SD_STORAGE_AUDIO_CLIP_MIN_SECONDS                 3
-#define DEFAULT_SD_STORAGE_PROBABILITY_THRESHOLD                  50
-#define DEFAULT_MIN_SHOT_ALERT_PROBABILITY                        50
-#define DEFAULT_GOOD_SHOT_ALERT_PROBABILITY                       60
+#define DEFAULT_SD_STORAGE_PROBABILITY_THRESHOLD                  0.0f
+#define DEFAULT_MIN_SHOT_ALERT_PROBABILITY                        0.0f
+#define DEFAULT_GOOD_SHOT_ALERT_PROBABILITY                       1.0f
 #define DEFAULT_MQTT_DEVICE_INFO_QOS                              0
 #define DEFAULT_MQTT_ALERT_QOS                                    1
 #define DEFAULT_MQTT_AUDIO_CLIP_QOS                               0
@@ -124,23 +124,22 @@ typedef struct __attribute__ ((__packed__))
 {
    uint8_t initialized_tag;
    uint8_t mqtt_device_info_qos, mqtt_alert_qos, mqtt_audio_qos;
-   uint8_t shot_detection_min_threshold, shot_detection_good_threshold;
-   uint8_t storage_classification_threshold, audio_clip_length_seconds;
-   uint8_t device_status_transmission_interval_minutes;
+   float shot_detection_min_threshold, shot_detection_good_threshold, storage_classification_threshold;
+   uint8_t audio_clip_length_seconds, device_status_transmission_interval_minutes;
    uint8_t bad_audio_restart_attempted, bad_ai_restart_attempted;
-   uint8_t reserved[21];
+   uint8_t reserved[12];
 } config_data_t;
 
 typedef struct __attribute__ ((__packed__))
 {
-   uint8_t storage_classification_threshold;
+   float storage_classification_threshold;
    uint8_t audio_clip_length_seconds;
 } ai_config_t;
 
 typedef struct __attribute__ ((__packed__))
 {
    uint8_t ai_firmware_version[AI_FIRMWARE_VERSION_LENGTH];
-   uint8_t class_probabilities[AI_NUM_CLASSES];
+   float class_outputs[AI_NUM_CLASSES];
 } ai_result_t;
 
 typedef union
