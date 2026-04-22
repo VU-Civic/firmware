@@ -53,14 +53,15 @@ debug: CFLAGS += -g3 -DDEBUG -O0
 debug: directories $(EXECUTABLE) secondary-outputs
 
 sd1: CFLAGS += -Ofast
+sd1: DEFINES += -DNON_PRODUCTION
 sd1: directories $(SD_EXECUTABLE)
 
 sd4: CFLAGS += -Ofast
-sd4: DEFINES += -DPACKET_FULL_AUDIO
+sd4: DEFINES += -DPACKET_FULL_AUDIO -DNON_PRODUCTION
 sd4: directories $(SD_EXECUTABLE)
 
 test: CFLAGS += -Ofast
-test: DEFINES += -DPERIPHERAL_TESTS
+test: DEFINES += -DPERIPHERAL_TESTS -DNON_PRODUCTION
 test: directories $(TEST_EXECUTABLE)
 
 directories: $(BUILD)
