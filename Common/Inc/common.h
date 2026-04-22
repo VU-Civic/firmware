@@ -87,7 +87,11 @@
   #define MAX(a, b)                          (((a) > (b)) ? (a) : (b))
 #endif
 
-#define DEFAULT_CONFIG_INITIALIZATION_TAG                         84
+#ifdef NON_PRODUCTION
+#define DEFAULT_CONFIG_INITIALIZATION_TAG                         80
+#else
+#define DEFAULT_CONFIG_INITIALIZATION_TAG                         94
+#endif
 #define DEFAULT_DEVICE_STATUS_UPDATE_INTERVAL_MINUTES             15
 #define DEFAULT_SD_STORAGE_AUDIO_CLIP_MIN_SECONDS                 3
 #define DEFAULT_SD_STORAGE_PROBABILITY_THRESHOLD                  0.0f
@@ -168,7 +172,7 @@ typedef struct __attribute__ ((__packed__, aligned (16)))
    double onset_timestamp;
    float onset_magnitude;
    float angle_of_arrival[3];
-   uint8_t reserved[12];
+   uint8_t reserved[9];
    uint8_t end_delimiter[4];
 } data_packet_t;
 
@@ -178,7 +182,7 @@ typedef struct __attribute__ ((__packed__, aligned (16)))
    int32_t audio_read_index, audio_clip_complete;
 } data_packet_container_t;
 
-typedef struct __attribute__ ((__packed__, aligned (4)))
+typedef struct __attribute__ ((__packed__))
 {
    uint64_t device_id;
    char imsi[CELL_IMSI_LENGTH+1];
@@ -197,7 +201,7 @@ typedef struct __attribute__ ((__packed__))
    float confidence, magnitude, angle_of_arrival[3];
 } event_info_t;
 
-typedef struct __attribute__ ((__packed__, aligned (4)))
+typedef struct __attribute__ ((__packed__))
 {
    uint64_t device_id;
    int32_t sensor_q1, sensor_q2, sensor_q3;
@@ -206,7 +210,7 @@ typedef struct __attribute__ ((__packed__, aligned (4)))
    event_info_t events[MAX_NUM_EVENTS_PER_ALERT];
 } alert_message_t;
 
-typedef struct __attribute__ ((__packed__, aligned (4)))
+typedef struct __attribute__ ((__packed__))
 {
    uint8_t device_id[7], clip_id, message_idx_and_final;
    uint8_t data[CELL_EVIDENCE_MAX_PAYLOAD_SIZE];
