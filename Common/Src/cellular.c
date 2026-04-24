@@ -400,7 +400,7 @@ static void cell_mqtt_publish_binary(char *command, uint32_t command_len, uint32
 {
    // Issue a publish command to transfer the binary data
    mqtt_operation_awaiting_ack = MQTT_PUBLISH;
-   if (cell_send_command_await_response(command, command_len, 1000))
+   if (mqtt_connected && cell_send_command_await_response(command, command_len, 1000))
    {
       // Wait until the transfer is acknowledged by the network
       set_command_timeout(network_timeout_ms / CELL_TIMER_MS_PER_TICK);
