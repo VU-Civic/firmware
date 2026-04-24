@@ -22,8 +22,6 @@ static alert_message_t alert_message;
 
 // Private Helper Functions --------------------------------------------------------------------------------------------
 
-#ifndef NON_PRODUCTION
-
 static void fill_detection_event(event_info_t *event_info, volatile detection_info_t *detection_info)
 {
    // Fill in the event info structure
@@ -33,8 +31,6 @@ static void fill_detection_event(event_info_t *event_info, volatile detection_in
    event_info->angle_of_arrival[1] = detection_info->onset_aoa[1];
    event_info->angle_of_arrival[2] = detection_info->onset_aoa[2];
 }
-
-#endif
 
 
 // Public API Functions ------------------------------------------------------------------------------------------------
@@ -71,7 +67,7 @@ void shot_detector_add_onset(volatile data_packet_t* volatile packet)
 void shot_detector_add_classification(float gunshot_classification)
 {
    // Add classification information to the end of the detection data
-   detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_classification= gunshot_classification;
+   detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_classification = gunshot_classification;
    detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_info_received = 1;
 }
 
@@ -86,13 +82,11 @@ uint8_t shot_detector_pending_processing(void)
 cell_audio_transmit_command_t shot_detector_process_detections(uint8_t audio_clip_id)
 {
    // Only proceed if the most recent shot detection has not yet been processed
+   static float max_classification = 0.0f;
    if (shot_detector_pending_processing())
    {
-#ifndef NON_PRODUCTION
-
       // Determine whether a shot was detected in the most recent audio clip
       uint8_t gunshot_detected = 0;
-      static float max_classification = 0.0f;
       for (uint32_t i = 0; i < AUDIO_NUM_DMAS_PER_CLIP; ++i)
          gunshot_detected |= detection_info[i].onset_detected;
       gunshot_detected &= (detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_classification >= device_info.device_config.shot_detection_min_threshold);  // TODO: device_info.device_config.shot_detection_good_threshold for evidence?;
@@ -131,8 +125,6 @@ cell_audio_transmit_command_t shot_detector_process_detections(uint8_t audio_cli
       }
       else
          audio_transmit_command = CELL_AUDIO_NO_TRANSMIT;
-
-#endif
 
       // Set the detection packet processed flag
       detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].detection_handled = 1;

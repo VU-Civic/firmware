@@ -88,9 +88,9 @@
 #endif
 
 #ifdef NON_PRODUCTION
-#define DEFAULT_CONFIG_INITIALIZATION_TAG                         80
+#define DEFAULT_CONFIG_INITIALIZATION_TAG                         81
 #else
-#define DEFAULT_CONFIG_INITIALIZATION_TAG                         94
+#define DEFAULT_CONFIG_INITIALIZATION_TAG                         93
 #endif
 #define DEFAULT_DEVICE_STATUS_UPDATE_INTERVAL_MINUTES             15
 #define DEFAULT_SD_STORAGE_AUDIO_CLIP_MIN_SECONDS                 3
