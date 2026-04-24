@@ -520,8 +520,7 @@ static uint8_t cell_configure_modem(void)
    device_info.device_id = strtoull((char*)data.packets[0].imei, NULL, 10);
 
    // Poll for the SIM card ID to verify that a card is present
-   cme_error = 0;
-   for (uint32_t retries = 0; (retries < 5) && !cell_send_command_await_response(CELL_GET_SIM_CARD_ID_MSG, sizeof(CELL_GET_SIM_CARD_ID_MSG), 1000) && !cme_error && !command_nacked; ++retries);
+   for (uint32_t retries = 0; (retries < 10) && !cell_send_command_await_response(CELL_GET_SIM_CARD_ID_MSG, sizeof(CELL_GET_SIM_CARD_ID_MSG), 1000) && !command_nacked; ++retries);
    const uint8_t sim_present = command_acked;
 
    // Continue configuring modem if the SIM was validated
