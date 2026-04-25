@@ -641,9 +641,10 @@ uint8_t audio_new_data_available(void)
    return (new_audio_packet != NULL);
 }
 
-uint8_t audio_process_new_data(cell_audio_transmit_command_t transmit_evidence)
+uint8_t audio_process_new_data(uint8_t incident_occurring)
 {
    // Proceed with processing if there is new audio data
+   static cell_audio_transmit_command_t audio_transmission = CELL_AUDIO_NO_TRANSMIT;
    if (new_audio_packet)
    {
       // Feed the watchdog and reset the audio packet pointer
@@ -657,8 +658,29 @@ uint8_t audio_process_new_data(cell_audio_transmit_command_t transmit_evidence)
       const opus_frame_t *result_begin, *result_end;
       opusenc_encode((int16_t*)audio_packet->audio, &result_begin, &result_end);
 
+      // Determine whether audio evidence should be transmitted and how
+      switch (audio_transmission)
+      {
+         case CELL_AUDIO_NO_TRANSMIT:
+            if (incident_occurring)
+               audio_transmission = CELL_AUDIO_TRANSMIT_BEGIN;
+            break;
+         case CELL_AUDIO_TRANSMIT_BEGIN:
+            audio_transmission = CELL_AUDIO_TRANSMIT_CONTINUE;
+            break;
+         case CELL_AUDIO_TRANSMIT_CONTINUE:
+            if (!incident_occurring)
+               audio_transmission = CELL_AUDIO_TRANSMIT_END;
+            break;
+         case CELL_AUDIO_TRANSMIT_END:
+            audio_transmission = incident_occurring ? CELL_AUDIO_TRANSMIT_BEGIN : CELL_AUDIO_NO_TRANSMIT;
+            break;
+         default:
+            break;
+      }
+
       // Transmit historical data if new evidence transmission was requested
-      if (transmit_evidence == CELL_AUDIO_TRANSMIT_BEGIN)
+      if (audio_transmission == CELL_AUDIO_TRANSMIT_BEGIN)
       {
          const opus_frame_t *history_start = opusenc_get_history(), *frame = opusenc_get_history();
          do {
@@ -668,9 +690,9 @@ uint8_t audio_process_new_data(cell_audio_transmit_command_t transmit_evidence)
       }
 
       // Optionally transmit the newly encoded data over the cellular network
-      if (transmit_evidence != CELL_AUDIO_NO_TRANSMIT)
+      if (audio_transmission != CELL_AUDIO_NO_TRANSMIT)
          for (const opus_frame_t *frame = result_begin; frame != result_end; frame = frame->next)
-            clip_id = cell_transmit_audio(frame, (transmit_evidence == CELL_AUDIO_TRANSMIT_END) && (frame->next == result_end));
+            clip_id = cell_transmit_audio(frame, (audio_transmission == CELL_AUDIO_TRANSMIT_END) && (frame->next == result_end));
 
 #endif  // #ifndef PACKET_FULL_AUDIO
 

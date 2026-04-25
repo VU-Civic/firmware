@@ -72,18 +72,18 @@ int main(void)
    // Wait for AI communications to stabilize
    while (!ai_comms_finalize())
    {
-      audio_process_new_data(CELL_AUDIO_NO_TRANSMIT);
+      audio_process_new_data(0);
       cell_update_state();
    }
 
    // Loop forever
-   cell_audio_transmit_command_t audio_transmit_command = CELL_AUDIO_NO_TRANSMIT;
+   uint8_t incident_occurring = 0;
    while (1)
    {
       // Carry out slow processing operations
       ai_comms_validate();
-      const uint8_t clip_id = audio_process_new_data(audio_transmit_command);
-      audio_transmit_command = shot_detector_process_detections(clip_id);
+      const uint8_t clip_id = audio_process_new_data(incident_occurring);
+      incident_occurring = shot_detector_process_detections(clip_id);
       cell_update_state();
 
       // Put the CPU to sleep if nothing left to process

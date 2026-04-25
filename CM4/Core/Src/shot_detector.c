@@ -15,8 +15,6 @@ typedef struct
 } detection_info_t;
 
 static volatile detection_info_t detection_info[AUDIO_NUM_DMAS_PER_CLIP];
-static uint8_t incident_occurring, incident_packets_received;
-static cell_audio_transmit_command_t audio_transmit_command;
 static alert_message_t alert_message;
 
 
@@ -39,9 +37,7 @@ void shot_detector_init(void)
 {
    // Initialize the detection info structure
    memset((void*)detection_info, 0, sizeof(detection_info));
-   incident_occurring = incident_packets_received = 0;
    alert_message.device_id = device_info.device_id;
-   audio_transmit_command = CELL_AUDIO_NO_TRANSMIT;
 }
 
 void shot_detector_new_clip(void)
@@ -79,22 +75,24 @@ uint8_t shot_detector_pending_processing(void)
            detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_info_received;
 }
 
-cell_audio_transmit_command_t shot_detector_process_detections(uint8_t audio_clip_id)
+uint8_t shot_detector_process_detections(uint8_t audio_clip_id)
 {
-   // Only proceed if the most recent shot detection has not yet been processed
+   // Create statically allocated detection processing state variables
+   static uint8_t incident_occurring = 0, incident_packets_received = 0;
    static float max_classification = 0.0f;
+
+   // Only proceed if the most recent shot detection has not yet been processed
    if (shot_detector_pending_processing())
    {
       // Determine whether a shot was detected in the most recent audio clip
       uint8_t gunshot_detected = 0;
       for (uint32_t i = 0; i < AUDIO_NUM_DMAS_PER_CLIP; ++i)
          gunshot_detected |= detection_info[i].onset_detected;
-      gunshot_detected &= (detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_classification >= device_info.device_config.shot_detection_min_threshold);  // TODO: device_info.device_config.shot_detection_good_threshold for evidence?;
+      gunshot_detected &= (detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_classification >= device_info.device_config.shot_detection_min_threshold);
 
       // Accumulate evidence during an active incident, sending alerts once per full clip
       if (incident_occurring)
       {
-         audio_transmit_command = CELL_AUDIO_TRANSMIT_CONTINUE;
          max_classification = (max_classification > detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_classification) ? max_classification : detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_classification;
          if (detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].onset_detected)
             fill_detection_event(&alert_message.events[alert_message.num_events++], &detection_info[AUDIO_NUM_DMAS_PER_CLIP-1]);
@@ -106,8 +104,6 @@ cell_audio_transmit_command_t shot_detector_process_detections(uint8_t audio_cli
             incident_occurring = (max_classification >= device_info.device_config.shot_detection_min_threshold) ? alert_message.num_events : 0;
             if (incident_occurring)
                cell_transmit_alert(&alert_message);
-            else
-               audio_transmit_command = CELL_AUDIO_TRANSMIT_END;
             alert_message.num_events = incident_packets_received = 0;
             max_classification = 0.0f;
          }
@@ -120,14 +116,11 @@ cell_audio_transmit_command_t shot_detector_process_detections(uint8_t audio_cli
          for (uint32_t i = 0; i < AUDIO_NUM_DMAS_PER_CLIP; ++i)
             if (detection_info[i].onset_detected)
                fill_detection_event(&alert_message.events[alert_message.num_events++], &detection_info[i]);
-         audio_transmit_command = CELL_AUDIO_TRANSMIT_BEGIN;
          incident_occurring = incident_packets_received = 1;
       }
-      else
-         audio_transmit_command = CELL_AUDIO_NO_TRANSMIT;
 
       // Set the detection packet processed flag
       detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].detection_handled = 1;
    }
-   return audio_transmit_command;
+   return incident_occurring;
 }
