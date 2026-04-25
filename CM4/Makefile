@@ -47,21 +47,25 @@ LFLAGS += --specs=nano.specs -mfpu=$(FPU) -mfloat-abi=$(FABI) -mthumb -Wl,--star
 #### Build Targets ####
 
 all: CFLAGS += -Ofast
+all: DEFINES += -DSIM_REQUIRED
 all: directories $(EXECUTABLE) secondary-outputs
 
 debug: CFLAGS += -g3 -DDEBUG -O0
 debug: directories $(EXECUTABLE) secondary-outputs
 
+sdsim: CFLAGS += -Ofast
+sdsim: DEFINES += -DSIM_REQUIRED
+sdsim: directories $(SD_EXECUTABLE)
+
 sd1: CFLAGS += -Ofast
-sd1: DEFINES += -DNON_PRODUCTION
 sd1: directories $(SD_EXECUTABLE)
 
 sd4: CFLAGS += -Ofast
-sd4: DEFINES += -DPACKET_FULL_AUDIO -DNON_PRODUCTION
+sd4: DEFINES += -DPACKET_FULL_AUDIO
 sd4: directories $(SD_EXECUTABLE)
 
 test: CFLAGS += -Ofast
-test: DEFINES += -DPERIPHERAL_TESTS -DNON_PRODUCTION
+test: DEFINES += -DPERIPHERAL_TESTS
 test: directories $(TEST_EXECUTABLE)
 
 directories: $(BUILD)
@@ -98,6 +102,9 @@ clean:
 flash: all
 	$(FLASH) -c port=SWD mode=UR -d $(EXECUTABLE) 0x08100000 -v
 
+flashsdsim: sdsim
+	$(FLASH) -c port=SWD mode=UR -d $(SD_EXECUTABLE) 0x08100000 -v
+
 flashsd1: sd1
 	$(FLASH) -c port=SWD mode=UR -d $(SD_EXECUTABLE) 0x08100000 -v
 
@@ -107,4 +114,4 @@ flashsd4: sd4
 flashtest: test
 	$(FLASH) -c port=SWD mode=UR -d $(TEST_EXECUTABLE) 0x08100000 -v
 
-.PHONY: all debug sd1 sd4 test directories secondary-outputs clean flash flashsd1 flashsd4 flashtest
+.PHONY: all debug sdsim sd1 sd4 test directories secondary-outputs clean flash flashsdsim flashsd1 flashsd4 flashtest

@@ -520,7 +520,8 @@ static uint8_t cell_configure_modem(void)
    device_info.device_id = strtoull((char*)data.packets[0].imei, NULL, 10);
 
    // Poll for the SIM card ID to verify that a card is present
-   for (uint32_t retries = 0; (retries < 10) && !cell_send_command_await_response(CELL_GET_SIM_CARD_ID_MSG, sizeof(CELL_GET_SIM_CARD_ID_MSG), 1000) && !command_nacked; ++retries);
+   for (uint32_t retries = 0; (retries < 20) && !cell_send_command_await_response(CELL_GET_SIM_CARD_ID_MSG, sizeof(CELL_GET_SIM_CARD_ID_MSG), 1000); ++retries)
+      HAL_Delay(50);
    const uint8_t sim_present = command_acked;
 
    // Continue configuring modem if the SIM was validated
@@ -563,6 +564,8 @@ static uint8_t cell_configure_modem(void)
    }
    else  // No SIM card present
    {
+#ifndef SIM_REQUIRED
+
       // Stop all peripherals related to cellular functionality
       HAL_NVIC_DisableIRQ(LPTIM5_IRQn);
       HAL_NVIC_DisableIRQ(LPTIM4_IRQn);
@@ -578,6 +581,10 @@ static uint8_t cell_configure_modem(void)
       CLEAR_BIT(RCC->APB4ENR, RCC_APB4ENR_LPTIM4EN);
       CLEAR_BIT(RCC->APB4ENR, RCC_APB4ENR_LPTIM3EN);
       CLEAR_BIT(RCC->APB1LENR, CELL_UART_CONCAT(RCC_APB1LENR_, CELL_UART_TYPE, CELL_UART_NUMBER, EN));
+
+#else
+      chip_reset();
+#endif
    }
 
    // Clear the configuration request flag
