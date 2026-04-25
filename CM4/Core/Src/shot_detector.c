@@ -78,7 +78,7 @@ uint8_t shot_detector_pending_processing(void)
 uint8_t shot_detector_process_detections(uint8_t audio_clip_id)
 {
    // Create statically allocated detection processing state variables
-   static uint8_t incident_occurring = 0, incident_packets_received = 0;
+   static uint8_t incident_occurring = 0, incident_packets_received = 0, transmit_audio = 0;
    static float max_classification = 0.0f;
 
    // Only proceed if the most recent shot detection has not yet been processed
@@ -94,6 +94,7 @@ uint8_t shot_detector_process_detections(uint8_t audio_clip_id)
       if (incident_occurring)
       {
          max_classification = (max_classification > detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_classification) ? max_classification : detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_classification;
+         transmit_audio |= (max_classification >= device_info.device_config.shot_detection_good_threshold);
          if (detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].onset_detected)
             fill_detection_event(&alert_message.events[alert_message.num_events++], &detection_info[AUDIO_NUM_DMAS_PER_CLIP-1]);
          if (++incident_packets_received >= AUDIO_NUM_DMAS_PER_CLIP)
@@ -113,6 +114,7 @@ uint8_t shot_detector_process_detections(uint8_t audio_clip_id)
          // Add detected onsets from any point in the most recent audio clip
          alert_message.num_events = 0;
          max_classification = detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_classification;
+         transmit_audio = (max_classification >= device_info.device_config.shot_detection_good_threshold);
          for (uint32_t i = 0; i < AUDIO_NUM_DMAS_PER_CLIP; ++i)
             if (detection_info[i].onset_detected)
                fill_detection_event(&alert_message.events[alert_message.num_events++], &detection_info[i]);
@@ -122,5 +124,5 @@ uint8_t shot_detector_process_detections(uint8_t audio_clip_id)
       // Set the detection packet processed flag
       detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].detection_handled = 1;
    }
-   return incident_occurring;
+   return incident_occurring && transmit_audio;
 }

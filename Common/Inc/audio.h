@@ -9,7 +9,7 @@ void audio_start(void);
 #ifdef CORE_CM4
 
 uint8_t audio_new_data_available(void);
-uint8_t audio_process_new_data(uint8_t incident_occurring);
+uint8_t audio_process_new_data(uint8_t transmit_audio);
 
 #endif  // #ifdef CORE_CM4
 

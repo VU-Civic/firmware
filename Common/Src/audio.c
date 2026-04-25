@@ -641,7 +641,7 @@ uint8_t audio_new_data_available(void)
    return (new_audio_packet != NULL);
 }
 
-uint8_t audio_process_new_data(uint8_t incident_occurring)
+uint8_t audio_process_new_data(uint8_t transmit_audio)
 {
    // Proceed with processing if there is new audio data
    static cell_audio_transmit_command_t audio_transmission = CELL_AUDIO_NO_TRANSMIT;
@@ -662,18 +662,18 @@ uint8_t audio_process_new_data(uint8_t incident_occurring)
       switch (audio_transmission)
       {
          case CELL_AUDIO_NO_TRANSMIT:
-            if (incident_occurring)
+            if (transmit_audio)
                audio_transmission = CELL_AUDIO_TRANSMIT_BEGIN;
             break;
          case CELL_AUDIO_TRANSMIT_BEGIN:
             audio_transmission = CELL_AUDIO_TRANSMIT_CONTINUE;
             break;
          case CELL_AUDIO_TRANSMIT_CONTINUE:
-            if (!incident_occurring)
+            if (!transmit_audio)
                audio_transmission = CELL_AUDIO_TRANSMIT_END;
             break;
          case CELL_AUDIO_TRANSMIT_END:
-            audio_transmission = incident_occurring ? CELL_AUDIO_TRANSMIT_BEGIN : CELL_AUDIO_NO_TRANSMIT;
+            audio_transmission = transmit_audio ? CELL_AUDIO_TRANSMIT_BEGIN : CELL_AUDIO_NO_TRANSMIT;
             break;
          default:
             break;
