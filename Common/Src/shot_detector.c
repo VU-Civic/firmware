@@ -1,3 +1,5 @@
+#ifdef CORE_CM4
+
 // Header Inclusions ---------------------------------------------------------------------------------------------------
 
 #include "cellular.h"
@@ -126,3 +128,5 @@ uint8_t shot_detector_process_detections(uint8_t audio_clip_id)
    }
    return incident_occurring && transmit_audio;
 }
+
+#endif  // #ifdef CORE_CM4

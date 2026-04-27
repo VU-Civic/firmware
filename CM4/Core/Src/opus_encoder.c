@@ -2,9 +2,9 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <limits.h>
 #include <math.h>
-#include "opus_config.h"
 #include "opus.h"
 
 
@@ -35,6 +35,13 @@ typedef struct
    opus_uint32 offs, rng, val, ext;
    int rem, error;
 } ec_ctx;
+
+#ifndef MIN
+  #define MIN(a, b)                          (((a) < (b)) ? (a) : (b))
+#endif
+#ifndef MAX
+  #define MAX(a, b)                          (((a) > (b)) ? (a) : (b))
+#endif
 
 
 // Math Functions -------------------------------------------------------------

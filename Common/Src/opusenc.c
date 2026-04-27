@@ -1,3 +1,5 @@
+#ifdef CORE_CM4
+
 // Header Inclusions ---------------------------------------------------------------------------------------------------
 
 #include "opus_config.h"
@@ -66,3 +68,5 @@ const opus_frame_t* opusenc_get_history(void)
    //   Caller should iterate through history via opus_frame->next until reaching the original pointer
    return opus_frame;
 }
+
+#endif  // #ifdef CORE_CM4
