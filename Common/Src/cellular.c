@@ -365,14 +365,14 @@ static uint32_t base85_encode_binary_data(char *output, const uint8_t *input, ui
    {
       uint32_t val = ((uint32_t)input[in_idx] << 24) | ((uint32_t)input[in_idx + 1] << 16) | ((uint32_t)input[in_idx + 2] << 8) | ((uint32_t)input[in_idx + 3]);
       uint32_t q = (uint32_t)(((uint64_t)val * 3233857729ULL) >> 38);
-      output[out_idx + 4] = '!' + (val - (q * 85));
+      output[out_idx + 4] = '%' + (val - (q * 85));
       val = q; q = (uint32_t)(((uint64_t)val * 3233857729ULL) >> 38);
-      output[out_idx + 3] = '!' + (val - (q * 85));
+      output[out_idx + 3] = '%' + (val - (q * 85));
       val = q; q = (uint32_t)(((uint64_t)val * 3233857729ULL) >> 38);
-      output[out_idx + 2] = '!' + (val - (q * 85));
+      output[out_idx + 2] = '%' + (val - (q * 85));
       val = q; q = (uint32_t)(((uint64_t)val * 3233857729ULL) >> 38);
-      output[out_idx + 1] = '!' + (val - (q * 85));
-      output[out_idx] = '!' + q;
+      output[out_idx + 1] = '%' + (val - (q * 85));
+      output[out_idx] = '%' + q;
    }
 
    // Pad and encode any remaining bytes
@@ -387,7 +387,7 @@ static uint32_t base85_encode_binary_data(char *output, const uint8_t *input, ui
       for (int j = 4; j >= 0; --j)
       {
          uint32_t q = (uint32_t)(((uint64_t)val * 3233857729ULL) >> 38);
-         encoded[j] = '!' + (val - (q * 85));
+         encoded[j] = '%' + (val - (q * 85));
          val = q;
       }
       for (uint32_t j = 0; j < remaining + 1; ++j)
