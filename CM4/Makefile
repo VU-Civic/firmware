@@ -14,6 +14,9 @@ SD_EXECUTABLE := $(BUILD)/$(SD_TARGET).elf
 TEST_TARGET := Test_$(TARGET)
 TEST_EXECUTABLE := $(BUILD)/$(TEST_TARGET).elf
 
+TEST_TRANSMIT_TARGET := Test_Transmit_$(TARGET)
+TEST_TRANSMIT_EXECUTABLE := $(BUILD)/$(TEST_TRANSMIT_TARGET).elf
+
 ifndef BOARD_REV
 $(error You must specify a BOARD_REV (A, B, etc) to continue)
 endif
@@ -64,6 +67,10 @@ sd4: CFLAGS += -Ofast
 sd4: DEFINES += -DPACKET_FULL_AUDIO
 sd4: directories $(SD_EXECUTABLE)
 
+transmit: CFLAGS += -Ofast
+transmit: DEFINES += -DSIM_REQUIRED
+transmit: directories $(TEST_TRANSMIT_EXECUTABLE)
+
 test: CFLAGS += -Ofast
 test: DEFINES += -DPERIPHERAL_TESTS
 test: directories $(TEST_EXECUTABLE)
@@ -79,6 +86,9 @@ $(EXECUTABLE) $(MAP_FILE): $(OBJECTS) $(BUILD)/main.o
 	$(CC) -o $@ -T$(LINKER_FILE) $^ $(LFLAGS)
 
 $(SD_EXECUTABLE): $(OBJECTS) $(BUILD)/sdcard.o
+	$(CC) -o $@ -T$(LINKER_FILE) $^ $(LFLAGS)
+
+$(TEST_TRANSMIT_EXECUTABLE): $(OBJECTS) $(BUILD)/cell_transmit.o
 	$(CC) -o $@ -T$(LINKER_FILE) $^ $(LFLAGS)
 
 $(TEST_EXECUTABLE): $(OBJECTS) $(BUILD)/manufacturing.o
@@ -111,7 +121,10 @@ flashsd1: sd1
 flashsd4: sd4
 	$(FLASH) -c port=SWD mode=UR -d $(SD_EXECUTABLE) 0x08100000 -v
 
+flashtransmit: transmit
+	$(FLASH) -c port=SWD mode=UR -d $(TEST_TRANSMIT_EXECUTABLE) 0x08100000 -v
+
 flashtest: test
 	$(FLASH) -c port=SWD mode=UR -d $(TEST_EXECUTABLE) 0x08100000 -v
 
-.PHONY: all debug sdsim sd1 sd4 test directories secondary-outputs clean flash flashsdsim flashsd1 flashsd4 flashtest
+.PHONY: all debug sdsim sd1 sd4 transmit test directories secondary-outputs clean flash flashsdsim flashsd1 flashsd4 flashtransmit flashtest
