@@ -153,7 +153,7 @@ int main(void)
       __DSB(); __ISB();
       WRITE_REG(SCB->ICIALLU, 0UL);
       __DSB(); __ISB();
-      CLEAR_BIT(SCB->CCR, SCB_CCR_IC_Msk);
+      SET_BIT(SCB->CCR, SCB_CCR_IC_Msk);
       __DSB(); __ISB();
    }
 
