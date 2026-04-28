@@ -8,6 +8,9 @@
 
 // Shot Detection Type Definitions and Static Variables ----------------------------------------------------------------
 
+#define SHOT_DETECTOR_RING_EXTRA_SLOTS       4
+#define SHOT_DETECTOR_RING_SIZE              (AUDIO_NUM_DMAS_PER_CLIP + SHOT_DETECTOR_RING_EXTRA_SLOTS)
+
 typedef struct
 {
    double onset_timestamp;
@@ -16,13 +19,14 @@ typedef struct
    uint8_t detection_handled;
 } detection_info_t;
 
-static volatile detection_info_t detection_info[AUDIO_NUM_DMAS_PER_CLIP];
+static volatile detection_info_t detection_info[SHOT_DETECTOR_RING_SIZE];
+static volatile uint32_t detection_ring_head, detection_ring_count, detection_pending_count;
 static alert_message_t alert_message;
 
 
 // Private Helper Functions --------------------------------------------------------------------------------------------
 
-static void fill_detection_event(event_info_t *event_info, volatile detection_info_t *detection_info)
+static void fill_detection_event(event_info_t *event_info, volatile detection_info_t* const detection_info)
 {
    // Fill in the event info structure
    event_info->timestamp = detection_info->onset_timestamp;
@@ -32,6 +36,26 @@ static void fill_detection_event(event_info_t *event_info, volatile detection_in
    event_info->angle_of_arrival[2] = detection_info->onset_aoa[2];
 }
 
+static uint32_t detection_ring_index(uint32_t logical_index)
+{
+   return (detection_ring_head + logical_index) % SHOT_DETECTOR_RING_SIZE;
+}
+
+static uint32_t detection_ring_index_from_head(uint32_t ring_head, uint32_t logical_index)
+{
+   return (ring_head + logical_index) % SHOT_DETECTOR_RING_SIZE;
+}
+
+static uint32_t detection_latest_index(void)
+{
+   return detection_ring_index(detection_ring_count - 1U);
+}
+
+static uint32_t detection_oldest_pending_offset(void)
+{
+   return detection_ring_count - detection_pending_count;
+}
+
 
 // Public API Functions ------------------------------------------------------------------------------------------------
 
@@ -39,42 +63,65 @@ void shot_detector_init(void)
 {
    // Initialize the detection info structure
    memset((void*)detection_info, 0, sizeof(detection_info));
+   detection_ring_head = detection_ring_count = detection_pending_count = 0;
    alert_message.device_id = device_info.device_id;
 }
 
 void shot_detector_new_clip(void)
 {
-   // Make room for a new set of detection data
-   for (uint32_t i = 1; i < AUDIO_NUM_DMAS_PER_CLIP; ++i)
-      detection_info[i-1] = detection_info[i];
-   memset((void*)&detection_info[AUDIO_NUM_DMAS_PER_CLIP-1], 0, sizeof(detection_info[0]));
+   // If full, drop oldest entry to make room for this new packet
+   if (detection_ring_count == SHOT_DETECTOR_RING_SIZE)
+   {
+      if (detection_pending_count)
+         --detection_pending_count;
+      detection_ring_head = (detection_ring_head + 1) % SHOT_DETECTOR_RING_SIZE;
+      --detection_ring_count;
+   }
+
+   // Append a new newest slot and mark it pending
+   const uint32_t new_slot = detection_ring_index(detection_ring_count);
+   memset((void*)&detection_info[new_slot], 0, sizeof(detection_info[0]));
+   ++detection_ring_count;
+   ++detection_pending_count;
 }
 
 void shot_detector_add_onset(volatile data_packet_t* volatile packet)
 {
    // Add onset information to the end of the detection data
-   detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].onset_detected = packet->onset_detected;
-   detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].onset_timestamp = packet->onset_timestamp;
-   detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].onset_magnitude = packet->onset_magnitude;
-   detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].onset_aoa[0] = packet->angle_of_arrival[0];
-   detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].onset_aoa[1] = packet->angle_of_arrival[1];
-   detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].onset_aoa[2] = packet->angle_of_arrival[2];
-   detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].onset_info_received = 1;
+   if (detection_ring_count)
+   {
+      volatile detection_info_t* const latest_detection = &detection_info[detection_latest_index()];
+      latest_detection->onset_detected = packet->onset_detected;
+      latest_detection->onset_timestamp = packet->onset_timestamp;
+      latest_detection->onset_magnitude = packet->onset_magnitude;
+      latest_detection->onset_aoa[0] = packet->angle_of_arrival[0];
+      latest_detection->onset_aoa[1] = packet->angle_of_arrival[1];
+      latest_detection->onset_aoa[2] = packet->angle_of_arrival[2];
+      latest_detection->onset_info_received = 1;
+   }
 }
 
 void shot_detector_add_classification(float gunshot_classification)
 {
    // Add classification information to the end of the detection data
-   detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_classification = gunshot_classification;
-   detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_info_received = 1;
+   if (detection_ring_count)
+   {
+      volatile detection_info_t* const latest_detection = &detection_info[detection_latest_index()];
+      latest_detection->gunshot_classification = gunshot_classification;
+      latest_detection->gunshot_info_received = 1;
+   }
 }
 
 uint8_t shot_detector_pending_processing(void)
 {
    // Return whether the most recent shot detection is pending processing
-   return !detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].detection_handled &&
-           detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].onset_info_received &&
-           detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_info_received;
+   if (detection_pending_count)
+   {
+      const volatile detection_info_t* const detection = &detection_info[detection_ring_index(detection_oldest_pending_offset())];
+      return !detection->detection_handled && detection->onset_info_received && detection->gunshot_info_received;
+   }
+   else
+      return 0;
 }
 
 uint8_t shot_detector_process_detections(uint8_t audio_clip_id)
@@ -86,19 +133,26 @@ uint8_t shot_detector_process_detections(uint8_t audio_clip_id)
    // Only proceed if the most recent shot detection has not yet been processed
    if (shot_detector_pending_processing())
    {
+      // Freeze queue processing locations and process oldest pending packet first
+      const uint32_t ring_head_snapshot = detection_ring_head, target_offset = detection_ring_count - detection_pending_count;
+      volatile detection_info_t* const latest_detection = &detection_info[detection_ring_index_from_head(ring_head_snapshot, target_offset)];
+
+      // Window for this target packet: logically oldest -> newest, ending at target
+      const uint32_t window_start = ((target_offset + 1) > AUDIO_NUM_DMAS_PER_CLIP) ? (target_offset + 1 - AUDIO_NUM_DMAS_PER_CLIP) : 0U;
+
       // Determine whether a shot was detected in the most recent audio clip
       uint8_t gunshot_detected = 0;
-      for (uint32_t i = 0; i < AUDIO_NUM_DMAS_PER_CLIP; ++i)
-         gunshot_detected |= detection_info[i].onset_detected;
-      gunshot_detected &= (detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_classification >= device_info.device_config.shot_detection_min_threshold);
+      for (uint32_t i = window_start; i <= target_offset; ++i)
+         gunshot_detected |= detection_info[detection_ring_index_from_head(ring_head_snapshot, i)].onset_detected;
+      gunshot_detected &= (latest_detection->gunshot_classification >= device_info.device_config.shot_detection_min_threshold);
 
       // Accumulate evidence during an active incident, sending alerts once per full clip
       if (incident_occurring)
       {
-         max_classification = (max_classification > detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_classification) ? max_classification : detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_classification;
+         max_classification = (max_classification > latest_detection->gunshot_classification) ? max_classification : latest_detection->gunshot_classification;
          transmit_audio |= (max_classification >= device_info.device_config.shot_detection_good_threshold);
-         if (detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].onset_detected)
-            fill_detection_event(&alert_message.events[alert_message.num_events++], &detection_info[AUDIO_NUM_DMAS_PER_CLIP-1]);
+         if (latest_detection->onset_detected)
+            fill_detection_event(&alert_message.events[alert_message.num_events++], latest_detection);
          if (++incident_packets_received >= AUDIO_NUM_DMAS_PER_CLIP)
          {
             for (uint8_t i = 0; i < alert_message.num_events; ++i)
@@ -115,16 +169,30 @@ uint8_t shot_detector_process_detections(uint8_t audio_clip_id)
       {
          // Add detected onsets from any point in the most recent audio clip
          alert_message.num_events = 0;
-         max_classification = detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].gunshot_classification;
+         max_classification = latest_detection->gunshot_classification;
          transmit_audio = (max_classification >= device_info.device_config.shot_detection_good_threshold);
-         for (uint32_t i = 0; i < AUDIO_NUM_DMAS_PER_CLIP; ++i)
-            if (detection_info[i].onset_detected)
-               fill_detection_event(&alert_message.events[alert_message.num_events++], &detection_info[i]);
+         for (uint32_t i = window_start; i <= target_offset; ++i)
+         {
+            volatile detection_info_t* const detection = &detection_info[detection_ring_index_from_head(ring_head_snapshot, i)];
+            if (detection->onset_detected)
+               fill_detection_event(&alert_message.events[alert_message.num_events++], detection);
+         }
          incident_occurring = incident_packets_received = 1;
       }
 
       // Set the detection packet processed flag
-      detection_info[AUDIO_NUM_DMAS_PER_CLIP-1].detection_handled = 1;
+      latest_detection->detection_handled = 1;
+      --detection_pending_count;
+
+      // Drop handled entries that are older than any remaining pending packet
+      while (detection_ring_count > detection_pending_count)
+      {
+         volatile detection_info_t* const oldest = &detection_info[detection_ring_head];
+         if (!oldest->detection_handled)
+            break;
+         detection_ring_head = (detection_ring_head + 1U) % SHOT_DETECTOR_RING_SIZE;
+         --detection_ring_count;
+      }
    }
    return incident_occurring && transmit_audio;
 }
