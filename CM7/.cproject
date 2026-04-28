@@ -44,6 +44,7 @@
 									<listOptionValue builtIn="false" value="STM32H745xx"/>
 									<listOptionValue builtIn="false" value="USE_PWR_LDO_SUPPLY"/>
 									<listOptionValue builtIn="false" value="DISABLEFLOAT16"/>
+									<listOptionValue builtIn="false" value="TELEMETRY_ENABLE_METRICS"/>
 									<listOptionValue builtIn="false" value="BOARD_REV=C"/>
 								</option>
 								<option IS_BUILTIN_EMPTY="false" IS_VALUE_EMPTY="false" id="com.st.stm32cube.ide.mcu.gnu.managedbuild.tool.c.compiler.option.includepaths.514813661" name="Include paths (-I)" superClass="com.st.stm32cube.ide.mcu.gnu.managedbuild.tool.c.compiler.option.includepaths" useByScannerDiscovery="false" valueType="includePath">

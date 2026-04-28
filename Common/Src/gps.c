@@ -371,7 +371,8 @@ static ubx_message_type_t gps_process_message(const uint8_t* msg, uint16_t max_m
             average_cno += message->data[i].cno;
             ++num_detections;
          }
-      average_cno /= num_detections;
+      if (num_detections)
+         average_cno /= num_detections;
       return UBX_NAV_SIG;
    }
    return UBX_MSG_UNKNOWN;
