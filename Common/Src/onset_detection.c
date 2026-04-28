@@ -69,14 +69,18 @@
 // Static Onset Detection Variables ------------------------------------------------------------------------------------
 
 static arm_rfft_fast_instance_f32 fft_coarse, fft_fine;
+static int16_t pending_buf[FFT_WINDOW_SIZE], pending_window[FFT_WINDOW_SIZE];
 static const float mic_offsets[AUDIO_NUM_CHANNELS-1][2] = { MIC_CH1_CH2_OFFSET, MIC_CH1_CH3_OFFSET, MIC_CH1_CH4_OFFSET };
 static float fft_buf[FFT_FILTER_SIZE], hanning_window[FFT_WINDOW_SIZE], hanning_window_fine[FFT_FINE_WINDOW_SIZE];
 static float broadband_noise_floor[BROADBAND_NOISE_BANDS], magnitudes[FFT_FILTER_SIZE/2], prev_magnitudes[FFT_FILTER_SIZE/2];
 static float magnitudes_fine[NUM_FFT_FINE_BINS], prev_magnitudes_fine[NUM_FFT_FINE_BINS];
 static float flux_ema_mean, flux_ema_var, prev_flux;
-static int16_t pending_buf[FFT_WINDOW_SIZE];
+static uint32_t pending_buf_head, flux_warmup_count;
 static int32_t samples_since_prev_onset;
-static uint32_t flux_warmup_count;
+
+#ifdef TELEMETRY_ENABLE_METRICS
+static volatile uint32_t onset_invoke_count, onset_detect_count, onset_cycles_last, onset_cycles_max;
+#endif
 
 
 // Private Helper Functions --------------------------------------------------------------------------------------------
@@ -284,30 +288,69 @@ void onset_detection_init(void)
    arm_fill_q15(0, pending_buf, FFT_WINDOW_SIZE);
    arm_fill_f32(0.0f, broadband_noise_floor, BROADBAND_NOISE_BANDS);
    flux_ema_mean = flux_ema_var = prev_flux = 0.0f;
+   pending_buf_head = flux_warmup_count = 0;
    samples_since_prev_onset = 10000000;
-   flux_warmup_count = 0;
+
+   // Clear all telemetry metrics
+#ifdef TELEMETRY_ENABLE_METRICS
+   onset_invoke_count = onset_detect_count = onset_cycles_last = onset_cycles_max = 0;
+#endif
 }
 
 double onset_detection_invoke(double packet_timestamp, const int16_t (*audio_samples)[AUDIO_BUFFER_SAMPLES_PER_CHANNEL], volatile data_packet_t* const packet)
 {
+   // Initialize telemetry metric cycle count
+#ifdef TELEMETRY_ENABLE_METRICS
+   const uint32_t cycle_start = READ_REG(DWT->CYCCNT);
+#endif
+
    // Use the first audio channel that is not in an alarm state
    double onset_timestamp = 0.0;
    packet->onset_magnitude = packet->angle_of_arrival[0] = packet->angle_of_arrival[1] = packet->angle_of_arrival[2] = 0.0f;
-   const int16_t *audio_packet = !packet->channel_alarms.alarm.ch1 ? audio_samples[0] : (!packet->channel_alarms.alarm.ch2 ? audio_samples[1] : (!packet->channel_alarms.alarm.ch3 ? audio_samples[2] : audio_samples[3]));
+   const int16_t *audio_packet = NULL;
+   if (!packet->channel_alarms.alarm.ch1)
+      audio_packet = audio_samples[0];
+   else if (!packet->channel_alarms.alarm.ch2)
+      audio_packet = audio_samples[1];
+   else if (!packet->channel_alarms.alarm.ch3)
+      audio_packet = audio_samples[2];
+   else if (!packet->channel_alarms.alarm.ch4)
+      audio_packet = audio_samples[3];
+   else
+      return 0.0;
 
    // Process the audio windows that straddle the previous and current packets
    for (int m = 0; m < MISSING_WINDOWS_PER_PACKET; ++m)
    {
-      // Append the next step of the current packet into the pending buffer's tail slot
-      arm_copy_q15(audio_packet + (m * FFT_STEP_SIZE), pending_buf + FFT_WINDOW_SIZE - FFT_STEP_SIZE, FFT_STEP_SIZE);
+      // Append the next step at the ring tail location
+      const int16_t *step_src = audio_packet + (m * FFT_STEP_SIZE);
+      const uint32_t tail_start = (pending_buf_head + (FFT_WINDOW_SIZE - FFT_STEP_SIZE)) % FFT_WINDOW_SIZE;
+      const uint32_t first_tail_copy = FFT_WINDOW_SIZE - tail_start;
+      if (first_tail_copy >= FFT_STEP_SIZE)
+         arm_copy_q15(step_src, pending_buf + tail_start, FFT_STEP_SIZE);
+      else
+      {
+         arm_copy_q15(step_src, pending_buf + tail_start, first_tail_copy);
+         arm_copy_q15(step_src + first_tail_copy, pending_buf, FFT_STEP_SIZE - first_tail_copy);
+      }
+
+      // Use the ring storage directly when contiguous, otherwise materialize into a scratch window
+      const int16_t *window = pending_buf;
+      if (pending_buf_head)
+      {
+         const uint32_t first_window_copy = FFT_WINDOW_SIZE - pending_buf_head;
+         arm_copy_q15(pending_buf + pending_buf_head, pending_window, first_window_copy);
+         arm_copy_q15(pending_buf, pending_window + first_window_copy, pending_buf_head);
+         window = pending_window;
+      }
 
       // Process the pending buffer as a complete window and save any detected onsets as timestamps
-      const double onset_time = process_time_step(pending_buf, packet_timestamp - ((AUDIO_PACKET_NUM_SAMPLES - ((AVAILABLE_WINDOWS_PER_PACKET + m) * FFT_STEP_SIZE)) / (double)AUDIO_SAMPLE_RATE_HZ));
+      const double onset_time = process_time_step(window, packet_timestamp - ((AUDIO_PACKET_NUM_SAMPLES - ((AVAILABLE_WINDOWS_PER_PACKET + m) * FFT_STEP_SIZE)) / (double)AUDIO_SAMPLE_RATE_HZ));
       if (onset_time > 0.0)
          onset_timestamp = onset_time;
 
-      // Slide the pending buffer forward by one step for the next missing window
-      memmove(pending_buf, pending_buf + FFT_STEP_SIZE, (FFT_WINDOW_SIZE - FFT_STEP_SIZE) * sizeof(pending_buf[0]));
+      // Advance the ring by one step for the next missing window
+      pending_buf_head = (pending_buf_head + FFT_STEP_SIZE) % FFT_WINDOW_SIZE;
    }
 
    // Process the audio windows fully contained within the current packet
@@ -320,6 +363,7 @@ double onset_detection_invoke(double packet_timestamp, const int16_t (*audio_sam
 
    // Save the tail of the current packet for next invocation's missing windows
    arm_copy_q15(audio_packet + (AVAILABLE_WINDOWS_PER_PACKET * FFT_STEP_SIZE), pending_buf, AUDIO_PACKET_NUM_SAMPLES - (AVAILABLE_WINDOWS_PER_PACKET * FFT_STEP_SIZE));
+   pending_buf_head = 0;
 
    // TODO: Calculate the angle of arrival for each detected onset (unless a channel is in an alarm state)
    /*if (!packet->channel_alarms.alarms)
@@ -334,6 +378,16 @@ double onset_detection_invoke(double packet_timestamp, const int16_t (*audio_sam
          angle_of_arrival[1] = sqrtf(1.0 - (angle_of_arrival[0]*angle_of_arrival[0] + angle_of_arrival[2]*angle_of_arrival[2]));
 
       }*/
+
+   // Update the most recent telemetry metrics
+#ifdef TELEMETRY_ENABLE_METRICS
+   onset_cycles_last = READ_REG(DWT->CYCCNT) - cycle_start;
+   ++onset_invoke_count;
+   if (onset_timestamp > 0.0)
+      ++onset_detect_count;
+   if (onset_cycles_last > onset_cycles_max)
+      onset_cycles_max = onset_cycles_last;
+#endif
    return onset_timestamp;
 }
 
