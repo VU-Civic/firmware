@@ -100,7 +100,7 @@
 #define CELL_READ_MQTTSN_CONFIG_MSG       "AT+UMQTTSN?\r"
 #define CELL_SAVE_MQTTSN_CONFIG_MSG       "AT+UMQTTSNNV=2\r"
 #define CELL_LOAD_MQTTSN_CONFIG_MSG       "AT+UMQTTSNNV=1\r"
-#define CELL_SET_MQTTSN_AUTO_PING_MSG     "AT+UMQTTSNC=10,1\r"
+#define CELL_SET_MQTTSN_AUTO_PING_MSG     "AT+UMQTTSNC=10,0\r"
 #define CELL_MQTTSN_CONNECT_MSG           "AT+UMQTTSNC=1\r"
 #define CELL_MQTTSN_REGISTER_MSG          "AT+UMQTTSNC=2,"
 #define CELL_MQTTSN_PUBLISH_INFO_MSG      "AT+UMQTTSNC=4,0,0,1,1,\"" STRINGIZE(CELL_MQTT_DEVICES_TOPIC) "\",\""
@@ -261,8 +261,8 @@ static uint8_t cell_send_command_await_response(char *command, uint32_t command_
 
 static void cell_mqtt_connect(void)
 {
-   // Preset the auto-ping message so we do not waste 2 messages after already connected
-   cell_send_command_await_response(CELL_SET_MQTTSN_AUTO_PING_MSG, sizeof(CELL_SET_MQTTSN_AUTO_PING_MSG), 40000);
+   // Disable auto-pinging since we should already be sending device status messages regularly
+   cell_send_command_await_response(CELL_SET_MQTTSN_AUTO_PING_MSG, sizeof(CELL_SET_MQTTSN_AUTO_PING_MSG), 1000);
 
    // Issue the connect command and handle the result through status notifications
    if (!mqtt_connected)
