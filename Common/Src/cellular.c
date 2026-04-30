@@ -263,7 +263,12 @@ static uint8_t cell_send_command_await_response(char *command, uint32_t command_
 static void cell_mqtt_connect(void)
 {
    // Do not attempt another connect while a prior attempt is still in progress
-   if (cell_busy || mqtt_connect_pending)
+   if (cell_busy)
+   {
+      connectivity_changed = 1;
+      return;
+   }
+   else if (mqtt_connect_pending)
       return;
 
    // Disable auto-pinging since we should already be sending device status messages regularly
@@ -282,6 +287,13 @@ static void cell_mqtt_connect(void)
 
 static void cell_mqtt_subscribe(void)
 {
+   // Do not attempt to subscribe if modem is currently busy with another task
+   if (cell_busy)
+   {
+      connectivity_changed = 1;
+      return;
+   }
+
    // Try to subscribe in a loop until success or the network disconnects
    cell_busy = 1;
    do
@@ -555,12 +567,12 @@ static uint8_t cell_configure_modem(void)
          for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(set_client_id_msg, sizeof(set_client_id_msg), 500); ++retries);
          for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_SET_SERVER_ADDR_MSG, sizeof(CELL_SET_SERVER_ADDR_MSG), 500); ++retries);
          for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_SET_CONN_TIMEOUT_MSG, sizeof(CELL_SET_CONN_TIMEOUT_MSG), 500); ++retries);
-         for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_SET_MAX_RESPONSE_TIME_MSG, sizeof(CELL_SET_MAX_RESPONSE_TIME_MSG), 500); ++retries);
          for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_SET_NON_CLEAN_SESSION_MSG, sizeof(CELL_SET_NON_CLEAN_SESSION_MSG), 500); ++retries);
          for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_SAVE_MQTTSN_CONFIG_MSG, sizeof(CELL_SAVE_MQTTSN_CONFIG_MSG), 1000); ++retries);
          for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_PDP_CONFIG_MSG, sizeof(CELL_PDP_CONFIG_MSG), 500); ++retries);
          for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_DISABLE_RADIO_MSG, sizeof(CELL_DISABLE_RADIO_MSG), 500); ++retries);
          for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_INIT_BEARER_CFG_MSG, sizeof(CELL_INIT_BEARER_CFG_MSG), 500); ++retries);
+         for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_SET_MAX_RESPONSE_TIME_MSG, sizeof(CELL_SET_MAX_RESPONSE_TIME_MSG), 500); ++retries);
          for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_ENABLE_RADIO_MSG, sizeof(CELL_ENABLE_RADIO_MSG), 500); ++retries);
          mqtt_configured = 1;
       }
@@ -622,9 +634,9 @@ static void update_device_configuration(volatile char* config_data, uint32_t dat
          else if (strcmp(key, "info_qos") == 0) new_config.mqtt_device_info_qos = (uint8_t)atoi(val);
          else if (strcmp(key, "alert_qos") == 0) new_config.mqtt_alert_qos = (uint8_t)atoi(val);
          else if (strcmp(key, "audio_qos") == 0) new_config.mqtt_audio_qos = (uint8_t)atoi(val);
-         else if (strcmp(key, "shot_min") == 0) new_config.shot_detection_min_threshold = (uint8_t)atoi(val);
-         else if (strcmp(key, "shot_good") == 0) new_config.shot_detection_good_threshold = (uint8_t)atoi(val);
-         else if (strcmp(key, "store_thresh") == 0) new_config.storage_classification_threshold = (uint8_t)atoi(val);
+         else if (strcmp(key, "shot_min") == 0) new_config.shot_detection_min_threshold = (float)atof(val);
+         else if (strcmp(key, "shot_good") == 0) new_config.shot_detection_good_threshold = (float)atof(val);
+         else if (strcmp(key, "store_thresh") == 0) new_config.storage_classification_threshold = (float)atof(val);
          else if (strcmp(key, "clip_sec") == 0) new_config.audio_clip_length_seconds = (uint8_t)atoi(val);
          else if (strcmp(key, "status_min") == 0) new_config.device_status_transmission_interval_minutes = (uint8_t)atoi(val);
       }
@@ -650,7 +662,7 @@ static void update_device_configuration(volatile char* config_data, uint32_t dat
    data.packets[0].ai_config.audio_clip_length_seconds = data.packets[1].ai_config.audio_clip_length_seconds = new_config.audio_clip_length_seconds;
    data.packets[0].ai_config.storage_classification_threshold = data.packets[1].ai_config.storage_classification_threshold = new_config.storage_classification_threshold;
    device_info.device_config = new_config;
-   chip_save_config();
+   chip_save_config(0);
 
    // Transmit a device status message to acknowledge receipt of the configuration change request
    device_update_timer_count = device_info_update = 0;
@@ -680,8 +692,7 @@ static char* handle_mqtt_message(char* msg, uint16_t max_msg_len, uint8_t is_mqt
       {
          char *message_end = msg - 3;
          incoming_message = message_end;
-         while (*(--incoming_message) != ',');
-         incoming_message += 2;
+         while (*(--incoming_message) != '{');
          incoming_message_length = (uint32_t)(message_end - incoming_message);
          --pending_messages;
       }
@@ -724,7 +735,10 @@ static uint16_t cell_process_message(char* msg, uint16_t max_msg_len)
       if (cme_error == 53)
       {
          if (mqtt_operation_awaiting_ack == MQTT_CONNECT)
-            mqtt_subscribed = mqtt_connected = 1;
+         {
+            mqtt_connected = 1;
+            connectivity_changed = 1;
+         }
          else if (mqtt_operation_awaiting_ack == MQTT_READ)
             pending_messages = 0;
       }
@@ -769,10 +783,7 @@ static uint16_t cell_process_message(char* msg, uint16_t max_msg_len)
       msg = find_end_of_message(msg_start, &max_msg_len) + 1;
       const uint32_t error_code = (uint32_t)atoi(msg_start + 1);
       if (error_class == UMQTTSN_ERROR_CLASS_CODE)
-      {
          cme_error = error_code;
-         // TODO: WHAT CODE DO WE GET IF UNEXPECTEDLY DISCONNECTED? DO WE GET SOMETHING HERE BEFORE WE GET ONE OF THE OTHER NETWORK NOTIFICATIONS? PROB WOULD RECEIVE CME_ERROR_MSG FIRST (UNSOLICITED) THEN HAVE TO ASK?
-      }
    }
    else if ((max_msg_len >= (3 + sizeof(CELL_SIGNAL_QUALITY_MSG))) && (memcmp(msg, CELL_SIGNAL_QUALITY_MSG, sizeof(CELL_SIGNAL_QUALITY_MSG) - 1) == 0))
    {
@@ -1268,7 +1279,7 @@ void cell_update_state(void)
          }
          else if (!mqtt_connected)
             cell_mqtt_connect();
-         else if (!mqtt_subscribed && !cell_busy)
+         else if (!mqtt_subscribed)
             cell_mqtt_subscribe();
       }
       else if (bad_network_conn_timer_count >= CELL_BAD_CONN_TIMEOUT_MINUTES)
