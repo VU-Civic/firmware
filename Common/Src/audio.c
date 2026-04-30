@@ -546,15 +546,14 @@ static void audio_update_channel_alarms(channel_alarms_t alarm_flags)
    if ((num_bad_audio_packets == (AUDIO_SILENCE_TIMEOUT_SECONDS * AUDIO_NUM_DMAS_PER_CLIP)) && !device_info.device_config.bad_audio_restart_attempted)
    {
       device_info.device_config.bad_audio_restart_attempted = 1;
-      chip_save_config();
-      chip_reset();
+      chip_save_config(1);
    }
 
    // Reset the audio reboot flag if the audio starts working
    if (!num_bad_audio_packets && device_info.device_config.bad_audio_restart_attempted)
    {
       device_info.device_config.bad_audio_restart_attempted = 0;
-      chip_save_config();
+      chip_save_config(0);
    }
 }
 

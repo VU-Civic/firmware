@@ -5,7 +5,8 @@
 
 void chip_reset(void);
 void chip_read_config(void);
-void chip_save_config(void);
+void chip_update_config(void) __attribute__((section(".RamFunc")));
+void chip_save_config(uint8_t needs_reboot);
 void chip_initialize_unused_pins(void);
 void cpu_init(void);
 void cpu_sleep(void);

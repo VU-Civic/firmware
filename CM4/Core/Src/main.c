@@ -74,6 +74,7 @@ int main(void)
    {
       audio_process_new_data(0);
       cell_update_state();
+      chip_update_config();
    }
 
    // Loop forever
@@ -85,6 +86,7 @@ int main(void)
       const uint8_t clip_id = audio_process_new_data(transmit_audio);
       transmit_audio = shot_detector_process_detections(clip_id);
       cell_update_state();
+      chip_update_config();
 
       // Put the CPU to sleep if nothing left to process
       __disable_irq();

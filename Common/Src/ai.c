@@ -290,7 +290,7 @@ uint8_t ai_comms_finalize(void)
       if (device_info.device_config.bad_ai_restart_attempted)
       {
          device_info.device_config.bad_ai_restart_attempted = 0;
-         chip_save_config();
+         chip_save_config(0);
       }
    }
    else if ((DWT->CYCCNT - ai_last_validation_time) > validation_timeout)
@@ -298,9 +298,10 @@ uint8_t ai_comms_finalize(void)
       if (!device_info.device_config.bad_ai_restart_attempted)
       {
          device_info.device_config.bad_ai_restart_attempted = 1;
-         chip_save_config();
+         chip_save_config(1);
       }
-      chip_reset();
+      else
+         chip_reset();
    }
 
    // Store the current AI firmware version and return success

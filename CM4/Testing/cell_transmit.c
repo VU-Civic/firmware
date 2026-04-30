@@ -74,6 +74,7 @@ int main(void)
    {
       audio_process_new_data(0);
       cell_update_state();
+      chip_update_config();
    }
 
    // Set up a fake alert message for testing
@@ -101,6 +102,7 @@ int main(void)
          cell_transmit_alert(&alert_message);
       }
       cell_update_state();
+      chip_update_config();
 
       // Put the CPU to sleep if nothing left to process
       __disable_irq();
