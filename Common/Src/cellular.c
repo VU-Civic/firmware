@@ -1280,7 +1280,10 @@ void cell_update_state(void)
          else if (!mqtt_connected)
             cell_mqtt_connect();
          else if (!mqtt_subscribed)
+         {
+            cell_send_command_await_response(CELL_GET_SIGNAL_QUALITY_MSG, sizeof(CELL_GET_SIGNAL_QUALITY_MSG), 1000);
             cell_mqtt_subscribe();
+         }
       }
       else if (bad_network_conn_timer_count >= CELL_BAD_CONN_TIMEOUT_MINUTES)
          cell_reboot_firmware(0);

@@ -43,7 +43,7 @@ OBJECTS := $(SOURCES:%.c=$(BUILD)/%.o) $(CMSIS_DSP_SOURCES:%.c=$(BUILD)/%.o) $(B
 
 CFLAGS  = -mcpu=$(CPU) -std=gnu11 $(DEFINES) $(INCLUDES) -ffunction-sections -fdata-sections -Wall -Wno-packed-bitfield-compat
 CFLAGS += -fstack-usage -MMD -MP --specs=nano.specs -mfpu=$(FPU) -mfloat-abi=$(FABI) -mthumb
-LFLAGS  = -mcpu=$(CPU) --specs=nosys.specs -Wl,-Map=$(MAP_FILE) -Wl,--gc-sections -static
+LFLAGS  = -mcpu=$(CPU) --specs=nosys.specs -Wl,-Map=$(MAP_FILE) -Wl,--no-warn-rwx-segments -Wl,--gc-sections -static
 LFLAGS += --specs=nano.specs -mfpu=$(FPU) -mfloat-abi=$(FABI) -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 
 
