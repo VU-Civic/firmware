@@ -164,9 +164,10 @@ static volatile mqtt_operation_t mqtt_operation_awaiting_ack = MQTT_DONE;
 static volatile uint8_t mqtt_result = 0, pending_messages = 0, connectivity_changed = 0, signal_power = 255;
 static volatile uint8_t cell_modem_available = 0, configure_modem = 0, mqtt_connected = 0, signal_quality = 255;
 static volatile uint8_t valid_cgreg = 0, valid_cereg = 0, valid_pdp = 0, temperature_alert = 0, reading_imsi = 0;
-static volatile uint8_t cell_busy = 0, device_info_update = 0, mqtt_configured = 0, mqtt_subscribed = 0, prompt_received = 0;
+static volatile uint8_t cell_busy = 0, device_info_update = 0, mqtt_configured = 0, prompt_received = 0;
 static volatile uint8_t device_update_timer_count = 0, bad_network_conn_timer_count = 0, bad_pdp_timer_count = 0;
 static volatile uint8_t command_acked = 0, command_nacked = 0, timed_out = 0, in_holdoff_period = 0;
+static volatile uint8_t mqtt_connect_pending = 0, bad_mqtt_conn_timer_count = 0, mqtt_subscribed = 0;
 static volatile char sim_id[SIM_CARD_ID_MAX_LENGTH+1], *incoming_message = 0;
 static volatile uint32_t incoming_message_length, baud_rate = 0, cme_error = 0;
 
@@ -261,14 +262,21 @@ static uint8_t cell_send_command_await_response(char *command, uint32_t command_
 
 static void cell_mqtt_connect(void)
 {
+   // Do not attempt another connect while a prior attempt is still in progress
+   if (cell_busy || mqtt_connect_pending)
+      return;
+
    // Disable auto-pinging since we should already be sending device status messages regularly
    cell_send_command_await_response(CELL_SET_MQTTSN_AUTO_PING_MSG, sizeof(CELL_SET_MQTTSN_AUTO_PING_MSG), 1000);
 
-   // Issue the connect command and handle the result through status notifications
+   // Issue the connect command; the CONNACK URC arrives asynchronously via the UART ISR
    if (!mqtt_connected)
    {
       mqtt_operation_awaiting_ack = MQTT_CONNECT;
-      cell_send_command_await_response(CELL_MQTTSN_CONNECT_MSG, sizeof(CELL_MQTTSN_CONNECT_MSG), 1000);
+      if (cell_send_command_await_response(CELL_MQTTSN_CONNECT_MSG, sizeof(CELL_MQTTSN_CONNECT_MSG), 3000))
+         mqtt_connect_pending = 1;
+      else
+         mqtt_operation_awaiting_ack = MQTT_DONE;
    }
 }
 
@@ -500,6 +508,7 @@ static void cell_reboot_firmware(uint8_t pdp_reboot)
 {
    // Reboot modem according to the requested method
    bad_network_conn_timer_count = bad_pdp_timer_count = 0;
+   bad_mqtt_conn_timer_count = mqtt_connect_pending = 0;
    if (pdp_reboot)
    {
       cell_send_command_await_response(CELL_PDP_DEACTIVATE_MSG, sizeof(CELL_PDP_DEACTIVATE_MSG), 1000);
@@ -661,6 +670,8 @@ static char* handle_mqtt_message(char* msg, uint16_t max_msg_len, uint8_t is_mqt
       mqtt_connected = (mqtt_operation == MQTT_CONNECT) && mqtt_result;
       msg = find_end_of_message(msg_start, &max_msg_len) + 1;
       mqtt_subscribed = !mqtt_connected;
+      if (mqtt_operation == MQTT_CONNECT)
+         mqtt_connect_pending = 0;
    }
    else if (mqtt_operation == MQTT_READ)
    {
@@ -910,9 +921,27 @@ void LPTIM3_IRQHandler(void)
    {
       bad_network_conn_timer_count = 0;
       if (valid_pdp)
+      {
          bad_pdp_timer_count = 0;
-      else if (++bad_pdp_timer_count >= CELL_BAD_PDP_TIMEOUT_MINUTES)
-         connectivity_changed = 1;
+         if (!mqtt_connected)
+         {
+            // Retry MQTT connect if the broker CONNACK was never received or was silently dropped
+            if (++bad_mqtt_conn_timer_count >= CELL_BAD_MQTT_TIMEOUT_MINUTES)
+            {
+               bad_mqtt_conn_timer_count = 0;
+               mqtt_connect_pending = 0;
+               connectivity_changed = 1;
+            }
+         }
+         else
+            bad_mqtt_conn_timer_count = 0;
+      }
+      else
+      {
+         bad_mqtt_conn_timer_count = 0;
+         if (++bad_pdp_timer_count >= CELL_BAD_PDP_TIMEOUT_MINUTES)
+            connectivity_changed = 1;
+      }
    }
    else if (++bad_network_conn_timer_count >= CELL_BAD_CONN_TIMEOUT_MINUTES)
       connectivity_changed = 1;
@@ -1239,13 +1268,13 @@ void cell_update_state(void)
          }
          else if (!mqtt_connected)
             cell_mqtt_connect();
-         else if (!mqtt_subscribed)
+         else if (!mqtt_subscribed && !cell_busy)
             cell_mqtt_subscribe();
       }
       else if (bad_network_conn_timer_count >= CELL_BAD_CONN_TIMEOUT_MINUTES)
          cell_reboot_firmware(0);
    }
-   if (device_info_update)
+   if (!cell_busy && device_info_update)
    {
       // Poll for the current cell signal quality and publish device status details
       device_info_update = 0;
@@ -1253,7 +1282,7 @@ void cell_update_state(void)
          cell_send_command_await_response(CELL_GET_SIGNAL_QUALITY_MSG, sizeof(CELL_GET_SIGNAL_QUALITY_MSG), 1000);
       cell_mqtt_publish_device_info();
    }
-   while (pending_messages)
+   while (!cell_busy && pending_messages)
       cell_process_network_message(cell_mqtt_read(), incoming_message_length);
 }
 
