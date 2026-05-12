@@ -49,12 +49,32 @@
 #define ENERGY_BAND_RATIO_HIGH_HZ              8000
 #define ENERGY_BAND_RATIO_THRESHOLD            120.0
 
-#define ENERGY_BAND_RATIO_LOW_BIN             (ENERGY_BAND_RATIO_LOW_HZ * FFT_FILTER_SIZE / AUDIO_SAMPLE_RATE_HZ)
-#define ENERGY_BAND_RATIO_MID_BIN             (ENERGY_BAND_RATIO_MID_HZ * FFT_FILTER_SIZE / AUDIO_SAMPLE_RATE_HZ)
-#define ENERGY_BAND_RATIO_HIGH_BIN            (1 + (ENERGY_BAND_RATIO_HIGH_HZ * FFT_FILTER_SIZE / AUDIO_SAMPLE_RATE_HZ))
+#define ENERGY_BAND_RATIO_LOW_BIN              (ENERGY_BAND_RATIO_LOW_HZ * FFT_FILTER_SIZE / AUDIO_SAMPLE_RATE_HZ)
+#define ENERGY_BAND_RATIO_MID_BIN              (ENERGY_BAND_RATIO_MID_HZ * FFT_FILTER_SIZE / AUDIO_SAMPLE_RATE_HZ)
+#define ENERGY_BAND_RATIO_HIGH_BIN             (1 + (ENERGY_BAND_RATIO_HIGH_HZ * FFT_FILTER_SIZE / AUDIO_SAMPLE_RATE_HZ))
 
 #define MIN_TIME_BETWEEN_ONSETS_MS             200
 #define MIN_SAMPLES_BETWEEN_ONSETS             (MIN_TIME_BETWEEN_ONSETS_MS * AUDIO_SAMPLE_RATE_HZ / 1000)
+
+#define XCORR_WINDOW_SIZE                      256
+#define XCORR_FFT_SIZE                         512
+#define XCORR_MAX_DELAY_SAMP                   16
+
+#define REFINE_SEARCH_BEFORE_MS                100
+#define REFINE_NOISE_WIN_MS                    60
+#define REFINE_NOISE_GAP_MS                    10
+#define REFINE_STE_WIN_MS                      3
+#define REFINE_STE_HOP_MS                      1
+#define REFINE_PEAK_FRACTION                   0.25f
+#define REFINE_NOISE_MULT                      9.0f
+
+#define REFINE_NOISE_WIN_S                     (REFINE_NOISE_WIN_MS * AUDIO_SAMPLE_RATE_HZ / 1000)
+#define REFINE_NOISE_GAP_S                     (REFINE_NOISE_GAP_MS * AUDIO_SAMPLE_RATE_HZ / 1000)
+#define REFINE_SB_S                            (REFINE_SEARCH_BEFORE_MS * AUDIO_SAMPLE_RATE_HZ / 1000)
+#define REFINE_STE_WIN_S                       (REFINE_STE_WIN_MS * AUDIO_SAMPLE_RATE_HZ / 1000)
+#define REFINE_STE_HOP_S                       (REFINE_STE_HOP_MS * AUDIO_SAMPLE_RATE_HZ / 1000)
+#define REFINE_ONSET_IN_CTX                    (REFINE_NOISE_WIN_S + REFINE_NOISE_GAP_S + REFINE_SB_S)
+#define REFINE_CTX_LEN                         (REFINE_ONSET_IN_CTX + REFINE_STE_WIN_S)
 
 #define NUM_TIME_STEPS_PER_PACKET              (AUDIO_PACKET_NUM_SAMPLES / FFT_STEP_SIZE)
 #define AVAILABLE_WINDOWS_PER_PACKET           (1 + (AUDIO_PACKET_NUM_SAMPLES - FFT_WINDOW_SIZE) / FFT_STEP_SIZE)
@@ -62,24 +82,28 @@
 
 #define arm_rfft_init                          ARM_EXPAND(FFT_FILTER_SIZE)
 #define arm_rfft_fine_init                     ARM_EXPAND(FFT_FINE_FILTER_SIZE)
+#define arm_rfft_xcorr_init                    ARM_EXPAND(XCORR_FFT_SIZE)
 #define ARM_EXPAND(x)                          ARM_STRINGIFY(x)
 #define ARM_STRINGIFY(x)                       arm_rfft_fast_init_ ## x ## _f32
 
 
 // Static Onset Detection Variables ------------------------------------------------------------------------------------
 
-static arm_rfft_fast_instance_f32 fft_coarse, fft_fine;
-static int16_t pending_buf[FFT_WINDOW_SIZE], pending_window[FFT_WINDOW_SIZE];
+static double previous_timestamp;
+static int64_t previous_raw_onset_sample, previous_start_sample;
+static arm_rfft_fast_instance_f32 fft_coarse, fft_fine, fft_xcorr;
+static int16_t previous_audio[AUDIO_NUM_CHANNELS][AUDIO_PACKET_NUM_SAMPLES], refinement_buf[REFINE_CTX_LEN];
 static const float mic_offsets[AUDIO_NUM_CHANNELS-1][2] = { MIC_CH1_CH2_OFFSET, MIC_CH1_CH3_OFFSET, MIC_CH1_CH4_OFFSET };
 static float fft_buf[FFT_FILTER_SIZE], hanning_window[FFT_WINDOW_SIZE], hanning_window_fine[FFT_FINE_WINDOW_SIZE];
 static float broadband_noise_floor[BROADBAND_NOISE_BANDS], magnitudes[FFT_FILTER_SIZE/2], prev_magnitudes[FFT_FILTER_SIZE/2];
-static float magnitudes_fine[NUM_FFT_FINE_BINS], prev_magnitudes_fine[NUM_FFT_FINE_BINS];
+static float magnitudes_fine[NUM_FFT_FINE_BINS], prev_magnitudes_fine[NUM_FFT_FINE_BINS], gcc_ch0_fft[XCORR_FFT_SIZE];
 static float flux_ema_mean, flux_ema_var, prev_flux;
-static uint32_t pending_buf_head, flux_warmup_count;
 static int32_t samples_since_prev_onset;
+static uint32_t flux_warmup_count;
 
 #ifdef TELEMETRY_ENABLE_METRICS
-static volatile uint32_t onset_invoke_count, onset_detect_count, onset_cycles_last, onset_cycles_max;
+static volatile uint32_t onset_invoke_count, onset_detect_count;
+static volatile float onset_ms_last, onset_ms_max;
 #endif
 
 
@@ -107,6 +131,179 @@ static void least_squares_3x2(float *output, const float *observations)
       output[0] = (v0*m11 - v1*m01) * inv_det;
       output[1] = (m00*v1 - m01*v0) * inv_det;
    }
+}
+
+static void build_refinement_buffer(int16_t *buff, int64_t onset_timestamp, int64_t current_start, const int16_t (*audio_samples)[AUDIO_BUFFER_SAMPLES_PER_CHANNEL], int selected_ch)
+{
+   // Compute the window boundaries of the previous and current packets relative to the detected onset
+   const int32_t ctx_start_rel = (int32_t)(onset_timestamp - current_start) - REFINE_ONSET_IN_CTX, previous_offset = (int32_t)(previous_start_sample - current_start);
+   const int32_t current_lo = (ctx_start_rel < 0) ? -ctx_start_rel : 0, current_hi_u = AUDIO_PACKET_NUM_SAMPLES - ctx_start_rel;
+   const int32_t current_hi = (current_hi_u < REFINE_CTX_LEN) ? current_hi_u : REFINE_CTX_LEN;
+   const int32_t previous_lo_u = previous_offset - ctx_start_rel, previous_hi_u = previous_offset + AUDIO_PACKET_NUM_SAMPLES - ctx_start_rel;
+   const int32_t previous_lo = (previous_lo_u > 0) ? previous_lo_u : 0, previous_hi = (previous_hi_u < REFINE_CTX_LEN) ? previous_hi_u : REFINE_CTX_LEN;
+
+   // Generate a zero-padded contiguous refinement buffer by copying from previous_audio and audio_samples as needed (buff[REFINE_ONSET_IN_CTX] will be the onset sample)
+   arm_fill_q15(0, buff, REFINE_CTX_LEN);
+   if (previous_lo < previous_hi)
+      arm_copy_q15(previous_audio[selected_ch] + (previous_lo + ctx_start_rel - previous_offset), buff + previous_lo, (uint32_t)(previous_hi - previous_lo));
+   if (current_lo < current_hi)
+      arm_copy_q15(audio_samples[selected_ch] + (current_lo + ctx_start_rel), buff + current_lo, (uint32_t)(current_hi - current_lo));
+}
+
+static int64_t refine_onset_using_ste(const int16_t *buff, int32_t nearby_offset, uint8_t nearby_offset_valid)
+{
+   // Advance noise_start past any earlier onset so that the estimate reflects true background energy
+   int32_t noise_start = 0;
+   const int32_t noise_end = REFINE_NOISE_WIN_S;
+   if (nearby_offset_valid && (nearby_offset < 0))
+   {
+      const int32_t prev_in_ctx = nearby_offset + REFINE_ONSET_IN_CTX;
+      if ((prev_in_ctx >= noise_start) && (prev_in_ctx < noise_end))
+      {
+         const int32_t new_start = prev_in_ctx + (MIN_SAMPLES_BETWEEN_ONSETS / 2);
+         if ((new_start > noise_start) && (new_start <= noise_end))
+            noise_start = new_start;
+      }
+   }
+
+   // Compute a noise energy estimate from the noise reference window
+   float noise_energy = 1e-12f;
+   if (noise_end > noise_start)
+   {
+      q63_t power_raw;
+      arm_power_q15(buff + noise_start, (uint32_t)(noise_end - noise_start), &power_raw);
+      const float cand = (float)((double)power_raw / ((noise_end - noise_start) * 1073741824.0));
+      if (cand > noise_energy) noise_energy = cand;
+   }
+
+   // Compute the STE threshold from the current onset estimate representing the latest possible onset time
+   q63_t power_raw;
+   arm_power_q15(buff + REFINE_ONSET_IN_CTX, REFINE_STE_WIN_S, &power_raw);
+   const float peak_ste = (float)((double)power_raw / (REFINE_STE_WIN_S * 1073741824.0));
+   const float threshold = ((peak_ste * REFINE_PEAK_FRACTION) > (noise_energy * REFINE_NOISE_MULT)) ? peak_ste * REFINE_PEAK_FRACTION : noise_energy * REFINE_NOISE_MULT;
+
+   // Scan backward for the first sample where the STE falls below the threshold
+   int32_t onset_pos = -1;
+   const int32_t scan_start = REFINE_NOISE_WIN_S + REFINE_NOISE_GAP_S;
+   for (int32_t pos = REFINE_ONSET_IN_CTX; pos >= scan_start; pos -= REFINE_STE_HOP_S)
+   {
+      arm_power_q15(buff + pos, REFINE_STE_WIN_S, &power_raw);
+      const float ste = (float)((double)power_raw / (REFINE_STE_WIN_S * 1073741824.0));
+      if (ste < threshold) break;
+      onset_pos = pos;
+   }
+   if (onset_pos < 0) return 0;
+
+   // Sample-level refinement within the onset step, capped at the original onset position estimate
+   int64_t result = onset_pos - REFINE_ONSET_IN_CTX;
+   const int32_t P_end = (onset_pos + REFINE_STE_WIN_S <= REFINE_ONSET_IN_CTX) ? onset_pos + REFINE_STE_WIN_S : REFINE_ONSET_IN_CTX + 1;
+   for (int32_t s = onset_pos; s < P_end; ++s)
+   {
+      const float sv = (float)buff[s] / 32768.0f;
+      if ((sv * sv) >= threshold) { result = s - REFINE_ONSET_IN_CTX; break; }
+   }
+   return result;
+}
+
+static void fill_xcorr_window_q15(int16_t *out, int ch, int64_t onset_samp_abs, int64_t current_start, const int16_t (*audio_samples)[AUDIO_BUFFER_SAMPLES_PER_CHANNEL])
+{
+   const int32_t win_start_rel = (int32_t)(onset_samp_abs - (XCORR_WINDOW_SIZE / 2) - current_start), previous_offset = (int32_t)(previous_start_sample - current_start);
+   const int32_t cur_lo = (win_start_rel < 0) ? -win_start_rel : 0, cur_hi = (AUDIO_PACKET_NUM_SAMPLES - win_start_rel < XCORR_WINDOW_SIZE) ? AUDIO_PACKET_NUM_SAMPLES - win_start_rel : XCORR_WINDOW_SIZE;
+   const int32_t previous_lo_u = previous_offset - win_start_rel, previous_hi_u = previous_offset + AUDIO_PACKET_NUM_SAMPLES - win_start_rel, previous_lo = (previous_lo_u > 0) ? previous_lo_u : 0;
+   const int32_t previous_hi = (previous_hi_u < XCORR_WINDOW_SIZE) ? previous_hi_u : XCORR_WINDOW_SIZE;
+   arm_fill_q15(0, out, XCORR_WINDOW_SIZE);
+   if (previous_lo < previous_hi)
+      arm_copy_q15(previous_audio[ch] + (previous_lo + win_start_rel - previous_offset), out + previous_lo, (uint32_t)(previous_hi - previous_lo));
+   if (cur_lo < cur_hi)
+      arm_copy_q15(audio_samples[ch] + (cur_lo + win_start_rel), out + cur_lo, (uint32_t)(cur_hi - cur_lo));
+}
+
+static void fill_xcorr_channel(float *out, int ch, int64_t onset_samp_abs, int64_t current_start, const int16_t (*audio_samples)[AUDIO_BUFFER_SAMPLES_PER_CHANNEL])
+{
+   int16_t xcorr_win[XCORR_WINDOW_SIZE];
+   fill_xcorr_window_q15(xcorr_win, ch, onset_samp_abs, current_start, audio_samples);
+   arm_q15_to_float(xcorr_win, out, XCORR_WINDOW_SIZE);
+}
+
+static int gcc_phat_delay(int ch, int64_t onset_samp_abs, int64_t current_start, const int16_t (*audio_samples)[AUDIO_BUFFER_SAMPLES_PER_CHANNEL])
+{
+   // Fill and take the FFT of channel N; copy the cached ch0 FFT into the working buffer
+   static float gcc_buf_a[XCORR_FFT_SIZE], gcc_buf_b[XCORR_FFT_SIZE];
+   fill_xcorr_channel(gcc_buf_b, ch, onset_samp_abs, current_start, audio_samples);
+   arm_fill_f32(0.0f, gcc_buf_b + XCORR_WINDOW_SIZE, XCORR_FFT_SIZE - XCORR_WINDOW_SIZE);
+   arm_rfft_fast_f32(&fft_xcorr, gcc_buf_b, gcc_buf_b, 0);
+   arm_copy_f32(gcc_ch0_fft, gcc_buf_a, XCORR_FFT_SIZE);
+
+   // Compute the PHAT cross-spectrum: G[k] = A[k]*conj(B[k]) / |A[k]*conj(B[k])|
+   gcc_buf_a[0] = ((gcc_buf_a[0] * gcc_buf_b[0]) >= 0.0f) ? 1.0f : -1.0f;   // DC (real only)
+   gcc_buf_a[1] = ((gcc_buf_a[1] * gcc_buf_b[1]) >= 0.0f) ? 1.0f : -1.0f;   // Nyquist (real only)
+
+   // Pass 1: compute raw cross-spectrum A*conj(B) into gcc_buf_a for bins 1..N/2-1
+   for (int k = 1; k < XCORR_FFT_SIZE / 2; ++k)
+   {
+      const float ar = gcc_buf_a[2*k], ai = gcc_buf_a[2*k + 1];
+      const float br = gcc_buf_b[2*k], bi = gcc_buf_b[2*k + 1];
+      gcc_buf_a[2*k] = (ar * br) + (ai * bi);
+      gcc_buf_a[2*k + 1] = (ai * br) - (ar * bi);
+   }
+
+   // Pass 2: batch-compute magnitudes into gcc_buf_b, then normalize
+   arm_cmplx_mag_f32(gcc_buf_a + 2, gcc_buf_b, XCORR_FFT_SIZE / 2 - 1);
+   for (int k = 1; k < XCORR_FFT_SIZE / 2; ++k)
+   {
+      const float mag = gcc_buf_b[k - 1];
+      if (mag > 1e-12f)
+      {
+         const float inv_mag = 1.0f / mag;
+         gcc_buf_a[2*k] *= inv_mag;
+         gcc_buf_a[2*k + 1] *= inv_mag;
+      }
+      else
+         gcc_buf_a[2*k] = gcc_buf_a[2*k + 1] = 0.0f;
+   }
+
+   // Take the inverse FFT to produce the GCC-PHAT function in the delay domain
+   arm_rfft_fast_f32(&fft_xcorr, gcc_buf_a, gcc_buf_b, 1);
+
+   // Find the peak within [-XCORR_MAX_DELAY_SAMP, +XCORR_MAX_DELAY_SAMP]
+   int best_delay = 0;
+   float best_val = gcc_buf_b[0];
+   for (int d = 1; d <= XCORR_MAX_DELAY_SAMP; ++d)
+   {
+      if (gcc_buf_b[d] > best_val)
+      {
+         best_val = gcc_buf_b[d];
+         best_delay =  d;
+      }
+      if (gcc_buf_b[XCORR_FFT_SIZE - d] > best_val)
+      {
+         best_val = gcc_buf_b[XCORR_FFT_SIZE - d];
+         best_delay = -d;
+      }
+   }
+   return best_delay;
+}
+
+static double calculate_interchannel_delays(int64_t onset_samp_abs, int64_t current_start, const int16_t (*audio_samples)[AUDIO_BUFFER_SAMPLES_PER_CHANNEL], double inter_channel_delays[AUDIO_NUM_CHANNELS-1], int selected_ch)
+{
+   // Compute and cache the ch0 FFT once
+   fill_xcorr_channel(gcc_ch0_fft, 0, onset_samp_abs, current_start, audio_samples);
+   arm_fill_f32(0.0f, gcc_ch0_fft + XCORR_WINDOW_SIZE, XCORR_FFT_SIZE - XCORR_WINDOW_SIZE);
+   arm_rfft_fast_f32(&fft_xcorr, gcc_ch0_fft, gcc_ch0_fft, 0);
+
+   // Use GCC-PHAT to calculate the delay of each channel relative to channel 0
+   for (int c = 1; c < AUDIO_NUM_CHANNELS; ++c)
+   {
+      const int delay_samp = gcc_phat_delay(c, onset_samp_abs, current_start, audio_samples);
+      inter_channel_delays[c - 1] = (double)delay_samp / AUDIO_SAMPLE_RATE_HZ;
+   }
+
+   // Compute the normalized magnitude as the RMS of the currently selected channel's onset window
+   q63_t power_raw;
+   int16_t xcorr_win[XCORR_WINDOW_SIZE];
+   fill_xcorr_window_q15(xcorr_win, selected_ch, onset_samp_abs, current_start, audio_samples);
+   arm_power_q15(xcorr_win, XCORR_WINDOW_SIZE, &power_raw);
+   return sqrt((double)power_raw / (XCORR_WINDOW_SIZE * 1073741824.0));
 }
 
 static float compute_flux_coarse(const int16_t *audio)
@@ -186,6 +383,7 @@ static float update_flux_statistics(float flux)
 
 static float broadband_activation(void)
 {
+   // Check for spectral activation across a broad number of frequency bands
    float active_bands = 0.0f;
    for (int b = 0; b < BROADBAND_NOISE_BANDS; ++b)
    {
@@ -236,10 +434,10 @@ static int check_onset_conditions(float flux, float adaptive_threshold)
    return 1;
 }
 
-static double onset_detector_refine(const int16_t *window)
+static int32_t onset_detector_refine(const int16_t *window)
 {
-   // Scan fine-grained FFT windows within the coarse detection frame to pinpoint onset
-   int32_t onset_offset = 0;
+   // Scan fine-grained FFT windows within the coarse detection frame to pinpoint the onset
+   int32_t onset_starting_sample = 0;
    float threshold = 2.0f * compute_flux_fine(window);
    for (int32_t off = FFT_FINE_STEP_SIZE; off <= (FFT_WINDOW_SIZE - FFT_FINE_WINDOW_SIZE); off += FFT_FINE_STEP_SIZE)
    {
@@ -247,14 +445,14 @@ static double onset_detector_refine(const int16_t *window)
       if (flux > threshold)
       {
          threshold = 2.0f * flux;
-         onset_offset = off;
+         onset_starting_sample = off;
       }
    }
-   samples_since_prev_onset = -onset_offset;
-   return (double)onset_offset / AUDIO_SAMPLE_RATE_HZ;
+   samples_since_prev_onset = -onset_starting_sample;
+   return onset_starting_sample + FFT_FINE_WINDOW_SIZE - FFT_FINE_STEP_SIZE;
 }
 
-static double process_time_step(const int16_t *window, double window_timestamp)
+static int32_t process_time_step(const int16_t *window)
 {
    // Calculate spectral flux on the current window and update the adaptive threshold
    const float flux = compute_flux_coarse(window);
@@ -262,11 +460,11 @@ static double process_time_step(const int16_t *window, double window_timestamp)
    samples_since_prev_onset += FFT_STEP_SIZE;
 
    // Check if this time step meets all conditions for an onset
-   double onset_timestamp = 0.0;
+   int32_t onset_starting_sample = -1;
    if (check_onset_conditions(flux, adaptive_threshold))
-      onset_timestamp = window_timestamp + onset_detector_refine(window);
+      onset_starting_sample = onset_detector_refine(window);
    prev_flux = flux;
-   return onset_timestamp;
+   return onset_starting_sample;
 }
 
 
@@ -274,30 +472,36 @@ static double process_time_step(const int16_t *window, double window_timestamp)
 
 void onset_detection_init(void)
 {
-   // Initialize both FFT instances and pre-compute Hanning windows
+   // Initialize all FFT instances and pre-compute Hanning windows
    arm_rfft_init(&fft_coarse);
    arm_rfft_fine_init(&fft_fine);
+   arm_rfft_xcorr_init(&fft_xcorr);
    arm_hanning_f32(hanning_window, FFT_WINDOW_SIZE);
    arm_hanning_f32(hanning_window_fine, FFT_FINE_WINDOW_SIZE);
 
-   // Zero all detection state
+   // Zero the detection state
    arm_fill_f32(0.0f, magnitudes, FFT_FILTER_SIZE / 2);
    arm_fill_f32(0.0f, prev_magnitudes, FFT_FILTER_SIZE / 2);
    arm_fill_f32(0.0f, magnitudes_fine, NUM_FFT_FINE_BINS);
    arm_fill_f32(0.0f, prev_magnitudes_fine, NUM_FFT_FINE_BINS);
-   arm_fill_q15(0, pending_buf, FFT_WINDOW_SIZE);
    arm_fill_f32(0.0f, broadband_noise_floor, BROADBAND_NOISE_BANDS);
+   arm_fill_q15(0, refinement_buf, REFINE_CTX_LEN);
+   memset(previous_audio, 0, sizeof(previous_audio));
    flux_ema_mean = flux_ema_var = prev_flux = 0.0f;
-   pending_buf_head = flux_warmup_count = 0;
+   flux_warmup_count = 0;
    samples_since_prev_onset = 10000000;
+   previous_timestamp = 0.0;
+   previous_start_sample = 0;
+   previous_raw_onset_sample = -1;
 
    // Clear all telemetry metrics
 #ifdef TELEMETRY_ENABLE_METRICS
-   onset_invoke_count = onset_detect_count = onset_cycles_last = onset_cycles_max = 0;
+   onset_invoke_count = onset_detect_count = 0;
+   onset_ms_last = onset_ms_max = 0.0f;
 #endif
 }
 
-double onset_detection_invoke(double packet_timestamp, const int16_t (*audio_samples)[AUDIO_BUFFER_SAMPLES_PER_CHANNEL], volatile data_packet_t* const packet)
+void onset_detection_invoke(double packet_timestamp, const int16_t (*audio_samples)[AUDIO_BUFFER_SAMPLES_PER_CHANNEL], volatile data_packet_t* const packet)
 {
    // Initialize telemetry metric cycle count
 #ifdef TELEMETRY_ENABLE_METRICS
@@ -305,90 +509,82 @@ double onset_detection_invoke(double packet_timestamp, const int16_t (*audio_sam
 #endif
 
    // Use the first audio channel that is not in an alarm state
-   double onset_timestamp = 0.0;
-   packet->onset_magnitude = packet->angle_of_arrival[0] = packet->angle_of_arrival[1] = packet->angle_of_arrival[2] = 0.0f;
+   int selected_ch = 0;
+   packet->onset_detected = 0;
    const int16_t *audio_packet = NULL;
-   if (!packet->channel_alarms.alarm.ch1)
-      audio_packet = audio_samples[0];
-   else if (!packet->channel_alarms.alarm.ch2)
-      audio_packet = audio_samples[1];
-   else if (!packet->channel_alarms.alarm.ch3)
-      audio_packet = audio_samples[2];
-   else if (!packet->channel_alarms.alarm.ch4)
-      audio_packet = audio_samples[3];
-   else
-      return 0.0;
+   if (!packet->channel_alarms.alarm.ch1) { audio_packet = audio_samples[0]; selected_ch = 0; }
+   else if (!packet->channel_alarms.alarm.ch2) { audio_packet = audio_samples[1]; selected_ch = 1; }
+   else if (!packet->channel_alarms.alarm.ch3) { audio_packet = audio_samples[2]; selected_ch = 2; }
+   else if (!packet->channel_alarms.alarm.ch4) { audio_packet = audio_samples[3]; selected_ch = 3; }
+   else return;
 
    // Process the audio windows that straddle the previous and current packets
+   double onset_timestamp = 0.0;
+   static int16_t pending_window[FFT_WINDOW_SIZE];
    for (int m = 0; m < MISSING_WINDOWS_PER_PACKET; ++m)
    {
-      // Append the next step at the ring tail location
-      const int16_t *step_src = audio_packet + (m * FFT_STEP_SIZE);
-      const uint32_t tail_start = (pending_buf_head + (FFT_WINDOW_SIZE - FFT_STEP_SIZE)) % FFT_WINDOW_SIZE;
-      const uint32_t first_tail_copy = FFT_WINDOW_SIZE - tail_start;
-      if (first_tail_copy >= FFT_STEP_SIZE)
-         arm_copy_q15(step_src, pending_buf + tail_start, FFT_STEP_SIZE);
-      else
-      {
-         arm_copy_q15(step_src, pending_buf + tail_start, first_tail_copy);
-         arm_copy_q15(step_src + first_tail_copy, pending_buf, FFT_STEP_SIZE - first_tail_copy);
-      }
-
-      // Use the ring storage directly when contiguous, otherwise materialize into a scratch window
-      const int16_t *window = pending_buf;
-      if (pending_buf_head)
-      {
-         const uint32_t first_window_copy = FFT_WINDOW_SIZE - pending_buf_head;
-         arm_copy_q15(pending_buf + pending_buf_head, pending_window, first_window_copy);
-         arm_copy_q15(pending_buf, pending_window + first_window_copy, pending_buf_head);
-         window = pending_window;
-      }
-
-      // Process the pending buffer as a complete window and save any detected onsets as timestamps
-      const double onset_time = process_time_step(window, packet_timestamp - ((AUDIO_PACKET_NUM_SAMPLES - ((AVAILABLE_WINDOWS_PER_PACKET + m) * FFT_STEP_SIZE)) / (double)AUDIO_SAMPLE_RATE_HZ));
-      if (onset_time > 0.0)
-         onset_timestamp = onset_time;
-
-      // Advance the ring by one step for the next missing window
-      pending_buf_head = (pending_buf_head + FFT_STEP_SIZE) % FFT_WINDOW_SIZE;
+      const int left_len = (FFT_WINDOW_SIZE - FFT_STEP_SIZE) - (m * FFT_STEP_SIZE);
+      arm_copy_q15(&previous_audio[selected_ch][AUDIO_PACKET_NUM_SAMPLES - left_len], pending_window, left_len);
+      arm_copy_q15(audio_packet, pending_window + left_len, FFT_WINDOW_SIZE - left_len);
+      const int32_t onset_sample = process_time_step(pending_window);
+      if (onset_sample >= 0)
+         onset_timestamp = packet_timestamp + ((onset_sample - AUDIO_PACKET_NUM_SAMPLES + ((AVAILABLE_WINDOWS_PER_PACKET + m) * FFT_STEP_SIZE)) / (double)AUDIO_SAMPLE_RATE_HZ);
    }
 
    // Process the audio windows fully contained within the current packet
    for (int t = 0; t < AVAILABLE_WINDOWS_PER_PACKET; ++t)
    {
-      const double onset_time = process_time_step(audio_packet + (t * FFT_STEP_SIZE), packet_timestamp + ((t * FFT_STEP_SIZE) / (double)AUDIO_SAMPLE_RATE_HZ));
-      if (onset_time > 0.0)
-         onset_timestamp = onset_time;
+      const int32_t onset_sample = process_time_step(audio_packet + (t * FFT_STEP_SIZE));
+      if (onset_sample >= 0)
+         onset_timestamp = packet_timestamp + (((t * FFT_STEP_SIZE) + onset_sample) / (double)AUDIO_SAMPLE_RATE_HZ);
    }
 
-   // Save the tail of the current packet for next invocation's missing windows
-   arm_copy_q15(audio_packet + (AVAILABLE_WINDOWS_PER_PACKET * FFT_STEP_SIZE), pending_buf, AUDIO_PACKET_NUM_SAMPLES - (AVAILABLE_WINDOWS_PER_PACKET * FFT_STEP_SIZE));
-   pending_buf_head = 0;
+   // Continue processing the event if an onset was detected
+   const int64_t current_start = (int64_t)round(packet_timestamp * AUDIO_SAMPLE_RATE_HZ);
+   if (onset_timestamp > 0.0)
+   {
+      // Refine the onset timestamp using short-time energy analysis on the raw waveform
+      const int64_t onset_sample_raw = (int64_t)round(onset_timestamp * AUDIO_SAMPLE_RATE_HZ);
+      build_refinement_buffer(refinement_buf, onset_sample_raw, current_start, audio_samples, selected_ch);
+      const int64_t onset_delta = refine_onset_using_ste(refinement_buf, (int32_t)(previous_raw_onset_sample - onset_sample_raw), previous_raw_onset_sample >= 0);
+      onset_timestamp += (double)onset_delta / AUDIO_SAMPLE_RATE_HZ;
+      previous_raw_onset_sample = onset_sample_raw + onset_delta;
 
-   // TODO: Calculate the angle of arrival for each detected onset (unless a channel is in an alarm state)
-   /*if (!packet->channel_alarms.alarms)
-      for (uint32_t i = 0; i < onsets.num_onsets; ++i)
-      {
-         const int32_t onset = onsets.indices[i];
-         // TODO: Cross-correlation to get all intra-channel offsets
-         float observations[AUDIO_NUM_CHANNELS-1] = { -343.0f * (onsets[1] - onsets[0]), -343.0f * (onsets[2] - onsets[0]), -343.0f * (onsets[3] - onsets[0]) };
-         float angle_of_arrival[3] = { 0 };
-         least_squares_3x2(angle_of_arrival, observations);
-         angle_of_arrival[2] = angle_of_arrival[1];
-         angle_of_arrival[1] = sqrtf(1.0 - (angle_of_arrival[0]*angle_of_arrival[0] + angle_of_arrival[2]*angle_of_arrival[2]));
+      // Retrieve all inter-channel delays along with a normalized event magnitude
+      double inter_channel_delays[AUDIO_NUM_CHANNELS-1];
+      const double onset_magnitude = calculate_interchannel_delays(previous_raw_onset_sample, current_start, audio_samples, inter_channel_delays, selected_ch);
 
-      }*/
+      // Calculate the angle of arrival of the detected onset
+      float angle_of_arrival[3] = { 0 };
+      float observations[AUDIO_NUM_CHANNELS-1] = { -343.0f * inter_channel_delays[0], -343.0f * inter_channel_delays[1], -343.0f * inter_channel_delays[2] };
+      least_squares_3x2(angle_of_arrival, observations);
+      angle_of_arrival[2] = angle_of_arrival[1];
+      angle_of_arrival[1] = sqrtf(1.0 - (angle_of_arrival[0]*angle_of_arrival[0] + angle_of_arrival[2]*angle_of_arrival[2]));
+
+      // Write detection results into the specified data packet
+      packet->onset_detected = 1;
+      packet->onset_timestamp = onset_timestamp;
+      packet->onset_magnitude = onset_magnitude;
+      packet->angle_of_arrival[0] = angle_of_arrival[0];
+      packet->angle_of_arrival[1] = angle_of_arrival[1];
+      packet->angle_of_arrival[2] = angle_of_arrival[2];
+   }
+
+   // Update the previous audio buffer for the next onset detection invocation
+   previous_timestamp = packet_timestamp;
+   previous_start_sample = current_start;
+   for (int c = 0; c < AUDIO_NUM_CHANNELS; ++c)
+      arm_copy_q15(audio_samples[c], previous_audio[c], AUDIO_PACKET_NUM_SAMPLES);
 
    // Update the most recent telemetry metrics
 #ifdef TELEMETRY_ENABLE_METRICS
-   onset_cycles_last = READ_REG(DWT->CYCCNT) - cycle_start;
+   onset_ms_last = 1000.0f * ((float)(READ_REG(DWT->CYCCNT) - cycle_start) / SystemCoreClock);
    ++onset_invoke_count;
    if (onset_timestamp > 0.0)
       ++onset_detect_count;
-   if (onset_cycles_last > onset_cycles_max)
-      onset_cycles_max = onset_cycles_last;
+   if (onset_ms_last > onset_ms_max)
+      onset_ms_max = onset_ms_last;
 #endif
-   return onset_timestamp;
 }
 
 #endif  // #ifdef CORE_CM7

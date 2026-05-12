@@ -112,7 +112,6 @@ void MDMA_IRQHandler(void)
       packet->channel_alarms.alarm.ch2 = ((audio_data[data.audio_read_index][1][0] == 0) && (audio_data[data.audio_read_index][1][1] == 0)) || ((audio_data[data.audio_read_index][1][0] == -1) && (audio_data[data.audio_read_index][1][1] == -1));
       packet->channel_alarms.alarm.ch3 = ((audio_data[data.audio_read_index][2][0] == 0) && (audio_data[data.audio_read_index][2][1] == 0)) || ((audio_data[data.audio_read_index][2][0] == -1) && (audio_data[data.audio_read_index][2][1] == -1));
       packet->channel_alarms.alarm.ch4 = ((audio_data[data.audio_read_index][3][0] == 0) && (audio_data[data.audio_read_index][3][1] == 0)) || ((audio_data[data.audio_read_index][3][0] == -1) && (audio_data[data.audio_read_index][3][1] == -1));
-      packet->onset_detected = 0;
 
       // Initiate transfer of audio channels to the other core
       WRITE_REG(MDMA_Channel2->CBNDTR, sizeof(data.packets[0].audio) & MDMA_CBNDTR_BNDT);
@@ -122,8 +121,7 @@ void MDMA_IRQHandler(void)
 
       // Feed the watchdog timer and process the newly received audio
       cpu_feed_watchdog();
-      packet->onset_timestamp = onset_detection_invoke(packet_timestamp, audio_data[data.audio_read_index], packet);
-      packet->onset_detected = (packet->onset_timestamp > 0.0);
+      onset_detection_invoke(packet_timestamp, audio_data[data.audio_read_index], packet);
 
       // Alert the other core that onset detection has completed
       if ((HSEM->RLR[CORE_TO_CORE_HSEM_NUMBER] == (HSEM_CR_COREID_CURRENT | HSEM_RLR_LOCK)))
