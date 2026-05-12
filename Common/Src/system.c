@@ -335,6 +335,13 @@ void cpu_init(void)
    // Disable SysTick interrupts
    CLEAR_BIT(SysTick->CTRL, SysTick_CTRL_TICKINT_Msk);
 
+   // Enable the DWT cycle counter to use for telemetry metrics
+#ifdef TELEMETRY_ENABLE_METRICS
+   SET_BIT(CoreDebug->DEMCR, CoreDebug_DEMCR_TRCENA_Msk);
+   WRITE_REG(DWT->CYCCNT, 0);
+   SET_BIT(DWT->CTRL, DWT_CTRL_CYCCNTENA_Msk);
+#endif
+
    // Enable an independent watchdog that resets if not fed within 1 second
    SET_BIT(DBGMCU->APB4FZ1, DBGMCU_APB4FZ1_DBG_IWDG1);
    WRITE_REG(IWDG1->KR, IWDG_KEY_ENABLE);
