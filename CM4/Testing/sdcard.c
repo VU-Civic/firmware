@@ -86,12 +86,13 @@ int main(void)
    }
 
    // Loop forever
+   uint8_t transmit_audio = 0;
    while (1)
    {
       // Carry out slow processing operations
       ai_comms_validate();
-      const uint8_t clip_id = audio_process_new_data(0);
-      shot_detector_process_detections(clip_id);
+      const uint8_t clip_id = audio_process_new_data(transmit_audio);
+      transmit_audio = shot_detector_process_detections(clip_id);
       cell_update_state();
       chip_update_config();
 

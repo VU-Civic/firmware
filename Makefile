@@ -15,20 +15,24 @@ ifndef STM32_PRG_PATH
 $(error You must add $(FLASH) to the PATH or specify the STM32_PRG_PATH to continue)
 endif
 
-.PHONY: all sdsim sd1 sd4 transmit test CM4 CM7 sd1CM4 sd4CM4 fullCM7 testCM4 testCM7 flash clean
+.PHONY: all sdsim sdsim4 sd1 sd4 transmit test CM4 CM7 sd1CM4 sd4CM4 fullCM7 testCM4 testCM7 flash clean
 
 all: CM4 CM7
 
 sdsim: sdsimCM4 CM7
-	$(MAKE) -C CM4 flashsdsim
+	$(MAKE) -C CM4 flashsd
+	$(MAKE) -C CM7 flash
+
+sdsim4: sd4simCM4 fullCM7
+	$(MAKE) -C CM4 flashsd
 	$(MAKE) -C CM7 flash
 
 sd1: sd1CM4 CM7
-	$(MAKE) -C CM4 flashsd1
+	$(MAKE) -C CM4 flashsd
 	$(MAKE) -C CM7 flash
 
 sd4: sd4CM4 fullCM7
-	$(MAKE) -C CM4 flashsd4
+	$(MAKE) -C CM4 flashsd
 	$(MAKE) -C CM7 flash
 
 transmit: transmitCM4 CM7
@@ -47,6 +51,9 @@ CM7:
 
 sdsimCM4:
 	$(MAKE) -C CM4 sdsim
+
+sd4simCM4:
+	$(MAKE) -C CM4 sdsim4
 
 sd1CM4:
 	$(MAKE) -C CM4 sd1

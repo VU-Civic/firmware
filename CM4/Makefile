@@ -57,14 +57,19 @@ debug: CFLAGS += -g3 -DDEBUG -O0
 debug: directories $(EXECUTABLE) secondary-outputs
 
 sdsim: CFLAGS += -Ofast
-sdsim: DEFINES += -DSIM_REQUIRED
+sdsim: DEFINES += -DSIM_REQUIRED -DDISABLE_EVIDENCE_XMIT
 sdsim: directories $(SD_EXECUTABLE)
 
+sdsim4: CFLAGS += -Ofast
+sdsim4: DEFINES += -DSIM_REQUIRED -DDISABLE_EVIDENCE_XMIT -DPACKET_FULL_AUDIO
+sdsim4: directories $(SD_EXECUTABLE)
+
 sd1: CFLAGS += -Ofast
+sd1: DEFINES += -DDISABLE_EVIDENCE_XMIT
 sd1: directories $(SD_EXECUTABLE)
 
 sd4: CFLAGS += -Ofast
-sd4: DEFINES += -DPACKET_FULL_AUDIO
+sd4: DEFINES += -DDISABLE_EVIDENCE_XMIT -DPACKET_FULL_AUDIO
 sd4: directories $(SD_EXECUTABLE)
 
 transmit: CFLAGS += -Ofast
@@ -112,13 +117,7 @@ clean:
 flash: all
 	$(FLASH) -c port=SWD mode=UR -d $(EXECUTABLE) 0x08100000 -v
 
-flashsdsim: sdsim
-	$(FLASH) -c port=SWD mode=UR -d $(SD_EXECUTABLE) 0x08100000 -v
-
-flashsd1: sd1
-	$(FLASH) -c port=SWD mode=UR -d $(SD_EXECUTABLE) 0x08100000 -v
-
-flashsd4: sd4
+flashsd:
 	$(FLASH) -c port=SWD mode=UR -d $(SD_EXECUTABLE) 0x08100000 -v
 
 flashtransmit: transmit
@@ -127,4 +126,4 @@ flashtransmit: transmit
 flashtest: test
 	$(FLASH) -c port=SWD mode=UR -d $(TEST_EXECUTABLE) 0x08100000 -v
 
-.PHONY: all debug sdsim sd1 sd4 transmit test directories secondary-outputs clean flash flashsdsim flashsd1 flashsd4 flashtransmit flashtest
+.PHONY: all debug sdsim sdsim4 sd1 sd4 transmit test directories secondary-outputs clean flash flashsd flashtransmit flashtest

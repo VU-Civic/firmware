@@ -649,8 +649,6 @@ uint8_t audio_process_new_data(uint8_t transmit_audio)
       new_audio_packet = NULL;
       cpu_feed_watchdog();
 
-#ifndef PACKET_FULL_AUDIO
-
       // Encode the audio data
       const opus_frame_t *result_begin, *result_end;
       opusenc_encode((int16_t*)audio_packet->audio, &result_begin, &result_end);
@@ -676,6 +674,8 @@ uint8_t audio_process_new_data(uint8_t transmit_audio)
             break;
       }
 
+#ifndef DISABLE_EVIDENCE_XMIT
+
       // Transmit historical data if new evidence transmission was requested
       if (audio_transmission == CELL_AUDIO_TRANSMIT_BEGIN)
       {
@@ -691,7 +691,7 @@ uint8_t audio_process_new_data(uint8_t transmit_audio)
          for (const opus_frame_t *frame = result_begin; frame != result_end; frame = frame->next)
             clip_id = cell_transmit_audio(frame, (audio_transmission == CELL_AUDIO_TRANSMIT_END) && (frame->next == result_end));
 
-#endif  // #ifndef PACKET_FULL_AUDIO
+#endif  // #ifndef DISABLE_EVIDENCE_XMIT
 
       // Poll for GPS signal strength if requested
       if (poll_gps_signal_strength)
