@@ -613,25 +613,48 @@ static uint8_t cell_configure_modem(void)
    return sim_present;
 }
 
-static void update_device_configuration(volatile char* config_data, uint32_t data_length)
+static void update_device_configuration(volatile char* config_data, uint32_t data_length, uint8_t test_mode_message)
 {
    // Parse the updated configuration values from the JSON message
    uint8_t correct_device_intent = 0;
    config_data_t new_config = device_info.device_config;
-   while (data_length && (*config_data != '}'))
+   while (data_length && (*config_data != '{')) { ++config_data; --data_length; }
+   if (data_length) { ++config_data; --data_length; }
+   while (data_length)
    {
-      while (--data_length && (*(++config_data) != '"'));
-      const char* const key = (const char*)config_data + 1;
-      while (data_length && --data_length && (*(++config_data) != '"'));
+      // Parse the key
+      while (data_length && (*config_data != '"') && (*config_data != '}')) { ++config_data; --data_length; }
+      if (!data_length || (*config_data == '}')) break;
+      ++config_data; --data_length;
+      const char* const key = (const char*)config_data;
+      while (data_length && (*config_data != '"')) { ++config_data; --data_length; }
+      if (!data_length) break;
       *config_data = '\0';
-      while (data_length && --data_length && ((*(++config_data) == ':') || (*config_data == ' ') || (*config_data == '\t') || (*config_data == '"')));
+      ++config_data; --data_length;
+
+      // Parse the value
+      uint8_t quoted_val = 0;
+      while (data_length && ((*config_data == ':') || (*config_data == ' ') || (*config_data == '\t'))) { ++config_data; --data_length; }
+      if (!data_length) break;
+      if (*config_data == '"') { quoted_val = 1; ++config_data; if (!--data_length) break; }
       const char* const val = (const char*)config_data;
-      while (data_length && --data_length && (*(++config_data) != '"') && (*config_data != ',') && (*config_data != '}'));
+      if (quoted_val)
+         while (data_length && (*config_data != '"')) { ++config_data; --data_length; }
+      else
+         while (data_length && (*config_data != ',') && (*config_data != '}')) { ++config_data; --data_length; }
+      if (!data_length) break;
+
+      // Save the delimiter and null-terminate the value
+      const char delim = (char)*config_data;
       *config_data = '\0';
-      if (data_length)
+      ++config_data; --data_length;
+
+      // Process the key-value pair
+      if ((strcmp(key, "id") == 0) && (((val[0] == '-') && (val[1] == '1')) || (strtoull(val, NULL, 10) == device_info.device_id))) correct_device_intent = 1;
+      else if (test_mode_message) { if (strcmp(key, "enabled") == 0) new_config.test_mode_start_time = (strcasecmp(val, "true") == 0) ? (uint32_t)data.packets[0].timestamp : 0; }
+      else
       {
-         if ((strcmp(key, "id") == 0) && (((val[0] == 'a') && (val[1] == 'l') && (val[2] == 'l')) || (strtoull(val, NULL, 10) == device_info.device_id))) correct_device_intent = 1;
-         else if (strcmp(key, "info_qos") == 0) new_config.mqtt_device_info_qos = (uint8_t)atoi(val);
+         if (strcmp(key, "info_qos") == 0) new_config.mqtt_device_info_qos = (uint8_t)atoi(val);
          else if (strcmp(key, "alert_qos") == 0) new_config.mqtt_alert_qos = (uint8_t)atoi(val);
          else if (strcmp(key, "audio_qos") == 0) new_config.mqtt_audio_qos = (uint8_t)atoi(val);
          else if (strcmp(key, "shot_min") == 0) new_config.shot_detection_min_threshold = (float)atof(val);
@@ -640,27 +663,43 @@ static void update_device_configuration(volatile char* config_data, uint32_t dat
          else if (strcmp(key, "clip_sec") == 0) new_config.audio_clip_length_seconds = (uint8_t)atoi(val);
          else if (strcmp(key, "status_min") == 0) new_config.device_status_transmission_interval_minutes = (uint8_t)atoi(val);
       }
+
+      // Check if parsing is complete
+      if (delim == '}') break;
+      if (quoted_val)
+      {
+         while (data_length && (*config_data != ',') && (*config_data != '}')) { ++config_data; --data_length; }
+         if (!data_length) break;
+         if (*config_data == '}') break;
+         ++config_data; --data_length;
+      }
    }
 
    // Do not update if this message was intended for a different device
    if (!correct_device_intent)
       return;
 
-   // Update the device reporting timer if status reporting has changed
-   if (new_config.device_status_transmission_interval_minutes && !device_info.device_config.device_status_transmission_interval_minutes)
-      SET_BIT(LPTIM3->CR, LPTIM_CR_CNTSTRT);
-   else if (!new_config.device_status_transmission_interval_minutes && device_info.device_config.device_status_transmission_interval_minutes)
+   // Update active runtime parameters if this was not a test mode message
+   if (!test_mode_message)
    {
-      CLEAR_BIT(LPTIM3->CR, LPTIM_CR_ENABLE);
-      while (READ_BIT(LPTIM3->CR, LPTIM_CR_ENABLE));
-      SET_BIT(LPTIM3->CR, LPTIM_CR_ENABLE);
-      WRITE_REG(LPTIM3->ARR, CELL_TIMER_1MIN_COUNT);
-      while (READ_REG(LPTIM3->ARR) != CELL_TIMER_1MIN_COUNT);
+      // Update the device reporting timer if status reporting has changed
+      if (new_config.device_status_transmission_interval_minutes && !device_info.device_config.device_status_transmission_interval_minutes)
+         SET_BIT(LPTIM3->CR, LPTIM_CR_CNTSTRT);
+      else if (!new_config.device_status_transmission_interval_minutes && device_info.device_config.device_status_transmission_interval_minutes)
+      {
+         CLEAR_BIT(LPTIM3->CR, LPTIM_CR_ENABLE);
+         while (READ_BIT(LPTIM3->CR, LPTIM_CR_ENABLE));
+         SET_BIT(LPTIM3->CR, LPTIM_CR_ENABLE);
+         WRITE_REG(LPTIM3->ARR, CELL_TIMER_1MIN_COUNT);
+         while (READ_REG(LPTIM3->ARR) != CELL_TIMER_1MIN_COUNT);
+      }
+
+      // Update the AI configuration parameters
+      data.packets[0].ai_config.audio_clip_length_seconds = data.packets[1].ai_config.audio_clip_length_seconds = new_config.audio_clip_length_seconds;
+      data.packets[0].ai_config.storage_classification_threshold = data.packets[1].ai_config.storage_classification_threshold = new_config.storage_classification_threshold;
    }
 
    // Copy the new configuration to non-volatile storage
-   data.packets[0].ai_config.audio_clip_length_seconds = data.packets[1].ai_config.audio_clip_length_seconds = new_config.audio_clip_length_seconds;
-   data.packets[0].ai_config.storage_classification_threshold = data.packets[1].ai_config.storage_classification_threshold = new_config.storage_classification_threshold;
    device_info.device_config = new_config;
    chip_save_config(0);
 
@@ -899,14 +938,17 @@ static uint16_t cell_process_message(char* msg, uint16_t max_msg_len)
 static void cell_process_network_message(volatile char* message, uint32_t message_length)
 {
    // Process the message depending on its type
-   if ((message_length >= (16 + CELL_IMEI_LENGTH)) && (memcmp((char*)message, "{\"type\"", 7) == 0))
+   if ((message_length >= 16) && (memcmp((char*)message, "{\"type\"", 7) == 0))
    {
       volatile char *type_start = message + 7;
       while ((*(++type_start) == ':') || (*type_start == ' ') || (*type_start == '\t') || (*type_start == '"'));
       switch ((mqtt_device_message_t)(*type_start))
       {
          case MQTT_DEVICE_CONFIG_UPDATE:
-            update_device_configuration(message, message_length);
+            update_device_configuration(message, message_length, 0);
+            break;
+         case MQTT_DEVICE_TEST_MODE:
+            update_device_configuration(message, message_length, 1);
             break;
          default:
             break;
@@ -1298,6 +1340,15 @@ void cell_update_state(void)
    }
    while (!cell_busy && pending_messages)
       cell_process_network_message(cell_mqtt_read(), incoming_message_length);
+
+   // Auto-disable test mode after a certain length of time
+   if (device_info.device_config.test_mode_start_time && ((uint32_t)data.packets[0].timestamp >= (device_info.device_config.test_mode_start_time + TEST_MODE_AUTO_DISABLE_SECONDS)))
+   {
+      device_update_timer_count = device_info_update = 0;
+      device_info.device_config.test_mode_start_time = 0;
+      cell_mqtt_publish_device_info();
+      chip_save_config(0);
+   }
 }
 
 uint8_t cell_pending_events(void)

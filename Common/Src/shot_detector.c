@@ -133,7 +133,7 @@ uint8_t shot_detector_process_detections(uint8_t audio_clip_id)
    // Only proceed if the most recent shot detection has not yet been processed
    if (shot_detector_pending_processing())
    {
-      // Freeze queue processing locations and process oldest pending packet first
+      // Freeze queue processing locations and process the oldest pending packet first
       const uint32_t ring_head_snapshot = detection_ring_head, target_offset = detection_ring_count - detection_pending_count;
       volatile detection_info_t* const latest_detection = &detection_info[detection_ring_index_from_head(ring_head_snapshot, target_offset)];
 
@@ -144,7 +144,8 @@ uint8_t shot_detector_process_detections(uint8_t audio_clip_id)
       uint8_t gunshot_detected = 0;
       for (uint32_t i = window_start; i <= target_offset; ++i)
          gunshot_detected |= detection_info[detection_ring_index_from_head(ring_head_snapshot, i)].onset_detected;
-      gunshot_detected &= (latest_detection->gunshot_classification >= device_info.device_config.shot_detection_min_threshold);
+      if (!device_info.device_config.test_mode_start_time)
+         gunshot_detected &= (latest_detection->gunshot_classification >= device_info.device_config.shot_detection_min_threshold);
 
       // Accumulate evidence during an active incident, sending alerts once per full clip
       if (incident_occurring)

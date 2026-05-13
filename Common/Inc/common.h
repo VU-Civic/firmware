@@ -70,6 +70,8 @@
 
 #define MAX_NUM_EVENTS_PER_ALERT             (2 * AUDIO_NUM_DMAS_PER_CLIP)
 
+#define TEST_MODE_AUTO_DISABLE_SECONDS       300
+
 #ifdef PACKET_FULL_AUDIO
 #define PACKET_AUDIO_SAMPLES                 AUDIO_BUFFER_SAMPLES
 #else
@@ -88,12 +90,12 @@
   #define MAX(a, b)                          (((a) > (b)) ? (a) : (b))
 #endif
 
-#define DEFAULT_CONFIG_INITIALIZATION_TAG                         93
+#define DEFAULT_CONFIG_INITIALIZATION_TAG                         98
 #define DEFAULT_DEVICE_STATUS_UPDATE_INTERVAL_MINUTES             15
 #define DEFAULT_SD_STORAGE_AUDIO_CLIP_MIN_SECONDS                 3
-#define DEFAULT_SD_STORAGE_PROBABILITY_THRESHOLD                  0.0f
-#define DEFAULT_MIN_SHOT_ALERT_PROBABILITY                        0.0f
-#define DEFAULT_GOOD_SHOT_ALERT_PROBABILITY                       1.0f
+#define DEFAULT_SD_STORAGE_PROBABILITY_THRESHOLD                  -0.5f
+#define DEFAULT_MIN_SHOT_ALERT_PROBABILITY                        -0.5f
+#define DEFAULT_GOOD_SHOT_ALERT_PROBABILITY                       0.0f
 #define DEFAULT_MQTT_DEVICE_INFO_QOS                              0
 #define DEFAULT_MQTT_ALERT_QOS                                    1
 #define DEFAULT_MQTT_AUDIO_CLIP_QOS                               0
@@ -128,7 +130,8 @@ typedef struct __attribute__ ((__packed__))
    float shot_detection_min_threshold, shot_detection_good_threshold, storage_classification_threshold;
    uint8_t audio_clip_length_seconds, device_status_transmission_interval_minutes;
    uint8_t bad_audio_restart_attempted, bad_ai_restart_attempted;
-   uint8_t reserved[12];
+   uint32_t test_mode_start_time;
+   uint8_t reserved[8];
 } config_data_t;
 
 typedef struct __attribute__ ((__packed__))
@@ -215,7 +218,8 @@ typedef struct __attribute__ ((__packed__))
 
 typedef enum
 {
-   MQTT_DEVICE_CONFIG_UPDATE = '1'
+   MQTT_DEVICE_CONFIG_UPDATE = '1',
+   MQTT_DEVICE_TEST_MODE = '2'
 } mqtt_device_message_t;
 
 typedef enum
