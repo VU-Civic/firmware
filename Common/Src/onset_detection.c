@@ -58,9 +58,12 @@
 
 #define XCORR_WINDOW_SIZE                      256
 #define XCORR_FFT_SIZE                         512
-#define XCORR_MAX_DELAY_SAMP                   16
+#define XCORR_MAX_DELAY_SAMP                   9
+#define XCORR_PHAT_MIN_BIN                     (SPECTROGRAM_MIN_FREQUENCY_HZ * XCORR_FFT_SIZE / AUDIO_SAMPLE_RATE_HZ)
+#define XCORR_PHAT_MAX_BIN                     (SPECTROGRAM_MAX_FREQUENCY_HZ * XCORR_FFT_SIZE / AUDIO_SAMPLE_RATE_HZ)
 
 #define REFINE_SEARCH_BEFORE_MS                100
+#define REFINE_SEARCH_AFTER_MS                 50
 #define REFINE_NOISE_WIN_MS                    60
 #define REFINE_NOISE_GAP_MS                    10
 #define REFINE_STE_WIN_MS                      3
@@ -71,10 +74,11 @@
 #define REFINE_NOISE_WIN_S                     (REFINE_NOISE_WIN_MS * AUDIO_SAMPLE_RATE_HZ / 1000)
 #define REFINE_NOISE_GAP_S                     (REFINE_NOISE_GAP_MS * AUDIO_SAMPLE_RATE_HZ / 1000)
 #define REFINE_SB_S                            (REFINE_SEARCH_BEFORE_MS * AUDIO_SAMPLE_RATE_HZ / 1000)
+#define REFINE_SA_S                            (REFINE_SEARCH_AFTER_MS * AUDIO_SAMPLE_RATE_HZ / 1000)
 #define REFINE_STE_WIN_S                       (REFINE_STE_WIN_MS * AUDIO_SAMPLE_RATE_HZ / 1000)
 #define REFINE_STE_HOP_S                       (REFINE_STE_HOP_MS * AUDIO_SAMPLE_RATE_HZ / 1000)
 #define REFINE_ONSET_IN_CTX                    (REFINE_NOISE_WIN_S + REFINE_NOISE_GAP_S + REFINE_SB_S)
-#define REFINE_CTX_LEN                         (REFINE_ONSET_IN_CTX + REFINE_STE_WIN_S)
+#define REFINE_CTX_LEN                         (REFINE_ONSET_IN_CTX + REFINE_SA_S)
 
 #define NUM_TIME_STEPS_PER_PACKET              (AUDIO_PACKET_NUM_SAMPLES / FFT_STEP_SIZE)
 #define AVAILABLE_WINDOWS_PER_PACKET           (1 + (AUDIO_PACKET_NUM_SAMPLES - FFT_WINDOW_SIZE) / FFT_STEP_SIZE)
@@ -176,16 +180,29 @@ static int64_t refine_onset_using_ste(const int16_t *buff, int32_t nearby_offset
       if (cand > noise_energy) noise_energy = cand;
    }
 
-   // Compute the STE threshold from the current onset estimate representing the latest possible onset time
+   // Pass 1: Forward scan over the full search+forward window to find the true signal peak.
+   // Using the peak at REFINE_ONSET_IN_CTX alone underestimates peak STE for distant shots
+   // because the acoustic envelope typically peaks well after the spectral-flux trigger.
    q63_t power_raw;
-   arm_power_q15(buff + REFINE_ONSET_IN_CTX, REFINE_STE_WIN_S, &power_raw);
-   const float peak_ste = (float)((double)power_raw / (REFINE_STE_WIN_S * 1073741824.0));
+   float peak_ste = 0.0f;
+   int32_t peak_pos = REFINE_ONSET_IN_CTX;
+   const int32_t scan_start = REFINE_NOISE_WIN_S + REFINE_NOISE_GAP_S, fwd_end = REFINE_CTX_LEN - REFINE_STE_WIN_S;
+   for (int32_t pos = scan_start; pos <= fwd_end; pos += REFINE_STE_HOP_S)
+   {
+      arm_power_q15(buff + pos, REFINE_STE_WIN_S, &power_raw);
+      const float ste = (float)((double)power_raw / (REFINE_STE_WIN_S * 1073741824.0));
+      if (ste > peak_ste) { peak_ste = ste; peak_pos = pos; }
+   }
+   if (peak_pos > REFINE_ONSET_IN_CTX)
+      peak_pos = REFINE_ONSET_IN_CTX;
+
+   // Threshold based on the true peak; for high-SNR shots the 25%-of-peak term dominates,
+   // keeping the onset sharp; for low-SNR shots the noise-floor guard dominates.
    const float threshold = ((peak_ste * REFINE_PEAK_FRACTION) > (noise_energy * REFINE_NOISE_MULT)) ? peak_ste * REFINE_PEAK_FRACTION : noise_energy * REFINE_NOISE_MULT;
 
-   // Scan backward for the first sample where the STE falls below the threshold
+   // Pass 2: Backward scan from the coarse onset location or the earlier true peak toward the noise region
    int32_t onset_pos = -1;
-   const int32_t scan_start = REFINE_NOISE_WIN_S + REFINE_NOISE_GAP_S;
-   for (int32_t pos = REFINE_ONSET_IN_CTX; pos >= scan_start; pos -= REFINE_STE_HOP_S)
+   for (int32_t pos = peak_pos; pos >= scan_start; pos -= REFINE_STE_HOP_S)
    {
       arm_power_q15(buff + pos, REFINE_STE_WIN_S, &power_raw);
       const float ste = (float)((double)power_raw / (REFINE_STE_WIN_S * 1073741824.0));
@@ -194,13 +211,14 @@ static int64_t refine_onset_using_ste(const int16_t *buff, int32_t nearby_offset
    }
    if (onset_pos < 0) return 0;
 
-   // Sample-level refinement within the onset step, capped at the original onset position estimate
-   int64_t result = onset_pos - REFINE_ONSET_IN_CTX;
-   const int32_t P_end = (onset_pos + REFINE_STE_WIN_S <= REFINE_ONSET_IN_CTX) ? onset_pos + REFINE_STE_WIN_S : REFINE_ONSET_IN_CTX + 1;
+   // Sample-level refinement: Scan forward within the triggering STE window for the first
+   // individual sample whose squared amplitude exceeds the threshold.
+   int64_t result = (int64_t)(onset_pos - REFINE_ONSET_IN_CTX);
+   const int32_t P_end = onset_pos + REFINE_STE_WIN_S;
    for (int32_t s = onset_pos; s < P_end; ++s)
    {
       const float sv = (float)buff[s] / 32768.0f;
-      if ((sv * sv) >= threshold) { result = s - REFINE_ONSET_IN_CTX; break; }
+      if ((sv * sv) >= threshold) { result = (int64_t)(s - REFINE_ONSET_IN_CTX); break; }
    }
    return result;
 }
@@ -225,63 +243,47 @@ static void fill_xcorr_channel(float *out, int ch, int64_t onset_samp_abs, int64
    arm_q15_to_float(xcorr_win, out, XCORR_WINDOW_SIZE);
 }
 
-static int gcc_phat_delay(int ch, int64_t onset_samp_abs, int64_t current_start, const int16_t (*audio_samples)[AUDIO_BUFFER_SAMPLES_PER_CHANNEL])
+static void gcc_phat_correlate(float *out, int ch, int64_t onset_samp_abs, int64_t current_start, const int16_t (*audio_samples)[AUDIO_BUFFER_SAMPLES_PER_CHANNEL])
 {
-   // Fill and take the FFT of channel N; copy the cached ch0 FFT into the working buffer
-   static float gcc_buf_a[XCORR_FFT_SIZE], gcc_buf_b[XCORR_FFT_SIZE];
-   fill_xcorr_channel(gcc_buf_b, ch, onset_samp_abs, current_start, audio_samples);
-   arm_fill_f32(0.0f, gcc_buf_b + XCORR_WINDOW_SIZE, XCORR_FFT_SIZE - XCORR_WINDOW_SIZE);
-   arm_rfft_fast_f32(&fft_xcorr, gcc_buf_b, gcc_buf_b, 0);
-   arm_copy_f32(gcc_ch0_fft, gcc_buf_a, XCORR_FFT_SIZE);
+   // Create a window and take the FFT of the indicated channel
+   static float gcc_buf[XCORR_FFT_SIZE];
+   fill_xcorr_channel(out, ch, onset_samp_abs, current_start, audio_samples);
+   arm_fill_f32(0.0f, out + XCORR_WINDOW_SIZE, XCORR_FFT_SIZE - XCORR_WINDOW_SIZE);
+   arm_rfft_fast_f32(&fft_xcorr, out, out, 0);
 
-   // Compute the PHAT cross-spectrum: G[k] = A[k]*conj(B[k]) / |A[k]*conj(B[k])|
-   gcc_buf_a[0] = ((gcc_buf_a[0] * gcc_buf_b[0]) >= 0.0f) ? 1.0f : -1.0f;   // DC (real only)
-   gcc_buf_a[1] = ((gcc_buf_a[1] * gcc_buf_b[1]) >= 0.0f) ? 1.0f : -1.0f;   // Nyquist (real only)
-
-   // Pass 1: compute raw cross-spectrum A*conj(B) into gcc_buf_a for bins 1..N/2-1
+   // Compute the cross-spectrum gcc_ch0_fft * conj(out) for in-band bins into gcc_buf
+   arm_copy_f32(gcc_ch0_fft, gcc_buf, XCORR_FFT_SIZE);
+   gcc_buf[0] = gcc_buf[1] = 0.0f;
    for (int k = 1; k < XCORR_FFT_SIZE / 2; ++k)
    {
-      const float ar = gcc_buf_a[2*k], ai = gcc_buf_a[2*k + 1];
-      const float br = gcc_buf_b[2*k], bi = gcc_buf_b[2*k + 1];
-      gcc_buf_a[2*k] = (ar * br) + (ai * bi);
-      gcc_buf_a[2*k + 1] = (ai * br) - (ar * bi);
+      if ((k < XCORR_PHAT_MIN_BIN) || (k > XCORR_PHAT_MAX_BIN))
+      {
+         gcc_buf[2*k] = gcc_buf[2*k + 1] = 0.0f;
+         continue;
+      }
+      const float ar = gcc_buf[2*k], ai = gcc_buf[2*k + 1];
+      const float br = out[2*k], bi = out[2*k + 1];
+      gcc_buf[2*k] = (ar * br) + (ai * bi);
+      gcc_buf[2*k + 1] = (ai * br) - (ar * bi);
    }
 
-   // Pass 2: batch-compute magnitudes into gcc_buf_b, then normalize
-   arm_cmplx_mag_f32(gcc_buf_a + 2, gcc_buf_b, XCORR_FFT_SIZE / 2 - 1);
+   // Batch-compute the FFT magnitudes, then normalize gcc_buf
+   arm_cmplx_mag_f32(gcc_buf + 2, out, XCORR_FFT_SIZE / 2 - 1);
    for (int k = 1; k < XCORR_FFT_SIZE / 2; ++k)
    {
-      const float mag = gcc_buf_b[k - 1];
+      const float mag = out[k - 1];
       if (mag > 1e-12f)
       {
          const float inv_mag = 1.0f / mag;
-         gcc_buf_a[2*k] *= inv_mag;
-         gcc_buf_a[2*k + 1] *= inv_mag;
+         gcc_buf[2*k] *= inv_mag;
+         gcc_buf[2*k + 1] *= inv_mag;
       }
       else
-         gcc_buf_a[2*k] = gcc_buf_a[2*k + 1] = 0.0f;
+         gcc_buf[2*k] = gcc_buf[2*k + 1] = 0.0f;
    }
 
-   // Take the inverse FFT to produce the GCC-PHAT function in the delay domain
-   arm_rfft_fast_f32(&fft_xcorr, gcc_buf_a, gcc_buf_b, 1);
-
-   // Find the peak within [-XCORR_MAX_DELAY_SAMP, +XCORR_MAX_DELAY_SAMP]
-   int best_delay = 0;
-   float best_val = gcc_buf_b[0];
-   for (int d = 1; d <= XCORR_MAX_DELAY_SAMP; ++d)
-   {
-      if (gcc_buf_b[d] > best_val)
-      {
-         best_val = gcc_buf_b[d];
-         best_delay =  d;
-      }
-      if (gcc_buf_b[XCORR_FFT_SIZE - d] > best_val)
-      {
-         best_val = gcc_buf_b[XCORR_FFT_SIZE - d];
-         best_delay = -d;
-      }
-   }
-   return best_delay;
+   // Take the IFFT to generate the correlation function in the delay domain
+   arm_rfft_fast_f32(&fft_xcorr, gcc_buf, out, 1);
 }
 
 static double calculate_interchannel_delays(int64_t onset_samp_abs, int64_t current_start, const int16_t (*audio_samples)[AUDIO_BUFFER_SAMPLES_PER_CHANNEL], double inter_channel_delays[AUDIO_NUM_CHANNELS-1], int selected_ch)
@@ -291,12 +293,46 @@ static double calculate_interchannel_delays(int64_t onset_samp_abs, int64_t curr
    arm_fill_f32(0.0f, gcc_ch0_fft + XCORR_WINDOW_SIZE, XCORR_FFT_SIZE - XCORR_WINDOW_SIZE);
    arm_rfft_fast_f32(&fft_xcorr, gcc_ch0_fft, gcc_ch0_fft, 0);
 
-   // Use GCC-PHAT to calculate the delay of each channel relative to channel 0
+   // Compute the GCC-PHAT correlation function for each channel pair
+   static float corr[AUDIO_NUM_CHANNELS-1][XCORR_FFT_SIZE];
    for (int c = 1; c < AUDIO_NUM_CHANNELS; ++c)
+      gcc_phat_correlate(corr[c - 1], c, onset_samp_abs, current_start, audio_samples);
+
+   // Joint search: find (d1, d2, d3) that maximizes the sum of correlation values subject to:
+   //   d1 >= d1_min  (elevation floor: mic pair 2 measures the vertical axis)
+   //   d1^2 + d2^2 <= D_sq  (unit-sphere constraint)
+   //   d3 in {d1+d2-1, d1+d2, d1+d2+1}  (geometric consistency with +-1 quantization slack)
+   float best_score = -1e30f;
+   int best_d1 = 0, best_d2 = 0, best_d3 = 0;
+   const int D_sq = XCORR_MAX_DELAY_SAMP * XCORR_MAX_DELAY_SAMP + 1;
+   const int d1_min = (int)ceilf(sinf(AOA_MIN_ELEVATION_DEG * ((float)M_PI / 180.0f)) * (float)XCORR_MAX_DELAY_SAMP);
+   for (int d1 = d1_min; d1 <= XCORR_MAX_DELAY_SAMP; ++d1)
    {
-      const int delay_samp = gcc_phat_delay(c, onset_samp_abs, current_start, audio_samples);
-      inter_channel_delays[c - 1] = (double)delay_samp / AUDIO_SAMPLE_RATE_HZ;
+      const int i1 = (d1 >= 0) ? d1 : (XCORR_FFT_SIZE + d1);
+      const float s1 = corr[0][i1];
+      for (int d2 = -XCORR_MAX_DELAY_SAMP; d2 <= XCORR_MAX_DELAY_SAMP; ++d2)
+      {
+         if (((d1*d1) + (d2*d2)) > D_sq)
+            continue;
+
+         const int i2 = (d2 >= 0) ? d2 : (XCORR_FFT_SIZE + d2);
+         const float s12 = s1 + corr[1][i2];
+         for (int dd = -1; dd <= 1; ++dd)
+         {
+            const int d3 = d1 + d2 + dd;
+            const int i3 = (d3 >= 0) ? d3 : (XCORR_FFT_SIZE + d3);
+            const float score = s12 + corr[2][i3];
+            if (score > best_score)
+            {
+               best_score = score;
+               best_d1 = d1; best_d2 = d2; best_d3 = d3;
+            }
+         }
+      }
    }
+   inter_channel_delays[0] = (double)best_d1 / AUDIO_SAMPLE_RATE_HZ;
+   inter_channel_delays[1] = (double)best_d2 / AUDIO_SAMPLE_RATE_HZ;
+   inter_channel_delays[2] = (double)best_d3 / AUDIO_SAMPLE_RATE_HZ;
 
    // Compute the normalized magnitude as the RMS of the currently selected channel's onset window
    q63_t power_raw;
@@ -559,7 +595,8 @@ void onset_detection_invoke(double packet_timestamp, const int16_t (*audio_sampl
       float observations[AUDIO_NUM_CHANNELS-1] = { -343.0f * inter_channel_delays[0], -343.0f * inter_channel_delays[1], -343.0f * inter_channel_delays[2] };
       least_squares_3x2(angle_of_arrival, observations);
       angle_of_arrival[2] = angle_of_arrival[1];
-      angle_of_arrival[1] = sqrtf(1.0 - (angle_of_arrival[0]*angle_of_arrival[0] + angle_of_arrival[2]*angle_of_arrival[2]));
+      const float horiz_sq = angle_of_arrival[0]*angle_of_arrival[0] + angle_of_arrival[2]*angle_of_arrival[2];
+      angle_of_arrival[1] = sqrtf((horiz_sq < 1.0f) ? 1.0f - horiz_sq : 0.0f);
 
       // Write detection results into the specified data packet
       packet->onset_detected = 1;
