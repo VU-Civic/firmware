@@ -160,7 +160,7 @@ uint8_t shot_detector_process_detections(uint8_t audio_clip_id)
                alert_message.events[i].confidence = fmaxf(0.0f, fminf(1.0f, ((2.0f * max_classification) + 5.0f) * 0.1));  // Hard Sigmoid function
             alert_message.audio_clip_id = audio_clip_id;
             incident_occurring = (max_classification >= device_info.device_config.shot_detection_min_threshold) ? alert_message.num_events : 0;
-            if (incident_occurring)
+            if (incident_occurring || device_info.device_config.test_mode_start_time)
                cell_transmit_alert(&alert_message);
             alert_message.num_events = incident_packets_received = 0;
             max_classification = 0.0f;
