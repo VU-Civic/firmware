@@ -95,7 +95,7 @@
 #define CELL_SET_CLIENT_ID_MSG            "AT+UMQTTSN=0,\"000000000000000\"\r"
 #define CELL_SET_SERVER_ADDR_MSG          "AT+UMQTTSN=2,\"" STRINGIZE(CELL_MQTT_BROKER_IP) "\"," STRINGIZE(CELL_MQTT_BROKER_PORT) "\r"
 #define CELL_SET_CONN_TIMEOUT_MSG         "AT+UMQTTSN=8," STRINGIZE(CELL_CONNECTION_TIMEOUT_SECONDS) "\r"
-#define CELL_SET_NON_CLEAN_SESSION_MSG    "AT+UMQTTSN=10,0\r"
+#define CELL_SET_CLEAN_SESSION_MSG        "AT+UMQTTSN=10,1\r"
 #define CELL_SET_MAX_RESPONSE_TIME_MSG    "AT+UMQTTSN=11," STRINGIZE(CELL_SERVER_RESPONSE_TIMEOUT_SECONDS) "\r"
 #define CELL_READ_MQTTSN_CONFIG_MSG       "AT+UMQTTSN?\r"
 #define CELL_SAVE_MQTTSN_CONFIG_MSG       "AT+UMQTTSNNV=2\r"
@@ -121,6 +121,12 @@
 #define AT_RESPONSE_ERROR                 "4\r"
 #define AT_RESPONSE_COMMAND_ABORTED       "3000\r"
 
+typedef struct
+{
+   evidence_message_t message;
+   uint16_t length;
+} cell_audio_tx_item_t;
+
 typedef enum
 {
    MQTT_DISCONNECT = 0,
@@ -139,11 +145,33 @@ typedef enum
    MQTT_DONE
 } mqtt_operation_t;
 
+typedef enum
+{
+   CELL_STEP_IDLE = 0,
+   CELL_STEP_WAIT_SIG_QUAL,
+#ifdef CELL_MQTT_USE_BINARY_PUBLISH
+   CELL_STEP_WAIT_PUB_PROMPT,
+#endif
+   CELL_STEP_WAIT_PUB_CMD_ACK,
+   CELL_STEP_WAIT_PUB_NET_ACK,
+   CELL_STEP_WAIT_MSG_READ,
+} cell_step_t;
+
+typedef enum
+{
+   CELL_PUB_DEVICE_INFO = 0,
+   CELL_PUB_ALERT,
+   CELL_PUB_AUDIO,
+} cell_pub_type_t;
+
 
 // Static Cellular Variables -------------------------------------------------------------------------------------------
 
 #define CELL_RX_BUFFER_SIZE_HALF       (2 * CELL_MAX_RX_PACKET_SIZE)
 #define CELL_RX_BUFFER_SIZE_FULL       (2 * CELL_RX_BUFFER_SIZE_HALF)
+
+#define CELL_ALERT_TX_RING_SIZE        4
+#define CELL_AUDIO_TX_RING_SIZE        3
 
 __attribute__ ((aligned (4)))
 static char cell_rx_buffer[CELL_RX_BUFFER_SIZE_FULL];
@@ -155,11 +183,18 @@ static char publish_info_message[10+sizeof(CELL_MQTTSN_PUB_BINARY_INFO_MSG)] = {
 static char publish_alert_message[10+sizeof(CELL_MQTTSN_PUB_BINARY_ALERT_MSG)] = { 0 };
 static char publish_audio_message[10+sizeof(CELL_MQTTSN_PUB_BINARY_AUDIO_MSG)] = { 0 };
 static uint32_t info_message_length, alert_message_length;
+static uint32_t cell_pending_cmd_len;
 #else
 static char publish_message_buffer[CELL_MAX_AT_COMMAND_SIZE];
 #endif
-static evidence_message_t evidence_message;
 
+static evidence_message_t evidence_message;
+static alert_message_t cell_alert_tx_ring[CELL_ALERT_TX_RING_SIZE];
+static cell_audio_tx_item_t cell_audio_tx_ring[CELL_AUDIO_TX_RING_SIZE];
+static volatile uint32_t cell_alert_tx_head, cell_alert_tx_count;
+static volatile uint32_t cell_audio_tx_head, cell_audio_tx_count;
+static volatile cell_step_t cell_step = CELL_STEP_IDLE;
+static volatile cell_pub_type_t cell_pending_pub = CELL_PUB_DEVICE_INFO;
 static volatile mqtt_operation_t mqtt_operation_awaiting_ack = MQTT_DONE;
 static volatile uint8_t mqtt_result = 0, pending_messages = 0, connectivity_changed = 0, signal_power = 255;
 static volatile uint8_t cell_modem_available = 0, configure_modem = 0, mqtt_connected = 0, signal_quality = 255;
@@ -256,7 +291,10 @@ static uint8_t cell_send_command_await_response(char *command, uint32_t command_
    cell_send_command(command, command_len);
    set_command_timeout(timeout_ms / CELL_TIMER_MS_PER_TICK);
    while (!command_acked && !command_nacked && !timed_out)
+   {
+      cpu_feed_watchdog();
       cpu_sleep();
+   }
    return command_acked;
 }
 
@@ -304,62 +342,16 @@ static void cell_mqtt_subscribe(void)
       cell_send_command_await_response(CELL_MQTTSN_SUBSCRIBE_MSG, sizeof(CELL_MQTTSN_SUBSCRIBE_MSG), 1000);
       set_command_timeout(5000 / CELL_TIMER_MS_PER_TICK);
       while (mqtt_connected && !timed_out && (mqtt_operation_awaiting_ack != MQTT_DONE))
+      {
+         cpu_feed_watchdog();
          cpu_sleep();
+      }
    } while (!mqtt_result && mqtt_connected);
    mqtt_subscribed = mqtt_result;
    cell_busy = 0;
 }
 
-#ifdef CELL_MQTT_USE_BINARY_PUBLISH
-
-static uint8_t cell_await_mqtt_binary_prompt(void)
-{
-   // Wait until the binary prompt indicator has been received
-   prompt_received = 0;
-   set_command_timeout(1000 / CELL_TIMER_MS_PER_TICK);
-   while (!prompt_received && !timed_out)
-      cpu_sleep();
-   in_holdoff_period = 0;
-   return prompt_received;
-}
-
-static uint8_t cell_mqtt_publish_binary(char *command, uint32_t command_len, char *data, uint32_t data_len, uint32_t network_timeout_ms)
-{
-   // Issue a publish command and wait until ready to transfer the binary data
-   cell_busy = 1;
-   mqtt_result = 0;
-   mqtt_operation_awaiting_ack = MQTT_PUBLISH_BINARY;
-   cell_send_command(command, command_len);
-   if (cell_await_mqtt_binary_prompt() && cell_send_command_await_response(data, data_len, 1000))
-   {
-      // Wait until the transfer is acknowledged by the network
-      set_command_timeout(network_timeout_ms / CELL_TIMER_MS_PER_TICK);
-      while (mqtt_connected && !timed_out && (mqtt_operation_awaiting_ack != MQTT_DONE))
-         cpu_sleep();
-   }
-   cell_busy = 0;
-   return mqtt_result;
-}
-
-static uint8_t cell_mqtt_publish_device_info(void)
-{
-   // Transfer the current device info packet to the network
-   return cell_mqtt_publish_binary(publish_info_message, info_message_length, (char*)&device_info, sizeof(device_info_t), CELL_MAX_NETWORK_RESPONSE_MS);
-}
-
-static uint8_t cell_mqtt_publish_alert(const alert_message_t *alert)
-{
-   // Transfer this event alert to the network
-   return cell_mqtt_publish_binary(publish_alert_message, alert_message_length, (char*)alert, sizeof(alert_message_t), CELL_MAX_NETWORK_RESPONSE_MS);
-}
-
-static uint8_t cell_mqtt_publish_audio(const evidence_message_t *evidence_message, uint16_t evidence_message_length)
-{
-   // Transfer this audio clip to the network
-   return cell_mqtt_publish_binary(publish_audio_message, 2 + sizeof(CELL_MQTTSN_PUB_BINARY_AUDIO_MSG) + offsetof(evidence_message_t, data) + evidence_message_length, (char*)evidence_message, offsetof(evidence_message_t, data) + evidence_message_length, CELL_MAX_NETWORK_RESPONSE_MS);
-}
-
-#else
+#ifndef CELL_MQTT_USE_BINARY_PUBLISH
 
 static uint32_t hex_encode_binary_data(char *output, const uint8_t *input, uint32_t input_num_bytes)
 {
@@ -416,80 +408,111 @@ static uint32_t base85_encode_binary_data(char *output, const uint8_t *input, ui
    return out_idx;
 }
 
-static void cell_mqtt_publish_binary(char *command, uint32_t command_len, uint32_t network_timeout_ms)
+#endif  // #ifndef CELL_MQTT_USE_BINARY_PUBLISH
+
+static void cell_advance_tx_rings(void)
 {
-   // Issue a publish command to transfer the binary data
-   mqtt_operation_awaiting_ack = MQTT_PUBLISH;
-   if (mqtt_connected && cell_send_command_await_response(command, command_len, 1000))
+   // Advance alert ring buffer if an alert was just sent
+   if (cell_pending_pub == CELL_PUB_ALERT)
    {
-      // Wait until the transfer is acknowledged by the network
-      set_command_timeout(network_timeout_ms / CELL_TIMER_MS_PER_TICK);
-      while (mqtt_connected && !timed_out && (mqtt_operation_awaiting_ack != MQTT_DONE))
-         cpu_sleep();
+      if (cell_alert_tx_count)
+      {
+         cell_alert_tx_head = (cell_alert_tx_head + 1) % CELL_ALERT_TX_RING_SIZE;
+         --cell_alert_tx_count;
+      }
+   }
+
+   // Advance audio ring buffer if an audio packet was just sent
+   else if (cell_pending_pub == CELL_PUB_AUDIO)
+   {
+      if (cell_audio_tx_count)
+      {
+         cell_audio_tx_head = (cell_audio_tx_head + 1) % CELL_AUDIO_TX_RING_SIZE;
+         --cell_audio_tx_count;
+      }
    }
 }
 
-static uint8_t cell_mqtt_publish_device_info(void)
+static void cell_start_nonblocking_publish(cell_pub_type_t pub_type)
 {
-   // Set up the publish transfer buffer
-   arm_copy_q7((q7_t*)CELL_MQTTSN_PUBLISH_INFO_MSG, (q7_t*)publish_message_buffer, sizeof(CELL_MQTTSN_PUBLISH_INFO_MSG));
-   publish_message_buffer[MQTTSN_PUBLISH_MSG_QOS_OFFSET] = (device_info.device_config.mqtt_device_info_qos > 0) ? '1' : '0';
-   const uint32_t message_len = 2 + sizeof(CELL_MQTTSN_PUBLISH_INFO_MSG) + hex_encode_binary_data(publish_message_buffer + sizeof(CELL_MQTTSN_PUBLISH_INFO_MSG) - 1, (const uint8_t*)&device_info, sizeof(device_info_t));
-   arm_copy_q7((q7_t*)"\"\r", (q7_t*)publish_message_buffer + message_len - 3, 2);
-
-   // Issue the publish command and wait for a response
+   // Set up a common publishing state
+   cell_pending_pub = pub_type;
    cell_busy = 1;
    mqtt_result = 0;
-   cell_mqtt_publish_binary(publish_message_buffer, message_len, CELL_MAX_NETWORK_RESPONSE_MS);
-   cell_busy = 0;
-   return mqtt_result;
-}
+   command_acked = command_nacked = 0;
 
-static uint8_t cell_mqtt_publish_alert(const alert_message_t *alert)
-{
-   // Set up the publish transfer buffer
-   arm_copy_q7((q7_t*)CELL_MQTTSN_PUBLISH_ALERT_MSG, (q7_t*)publish_message_buffer, sizeof(CELL_MQTTSN_PUBLISH_ALERT_MSG));
-   publish_message_buffer[MQTTSN_PUBLISH_MSG_QOS_OFFSET] = (device_info.device_config.mqtt_alert_qos > 0) ? '1' : '0';
-   const uint32_t message_len = 2 + sizeof(CELL_MQTTSN_PUBLISH_ALERT_MSG) + hex_encode_binary_data(publish_message_buffer + sizeof(CELL_MQTTSN_PUBLISH_ALERT_MSG) - 1, (const uint8_t*)alert, sizeof(alert_message_t) - sizeof(alert->events) + (sizeof(event_info_t) * alert->num_events));
-   arm_copy_q7((q7_t*)"\"\r", (q7_t*)publish_message_buffer + message_len - 3, 2);
+#ifdef CELL_MQTT_USE_BINARY_PUBLISH
 
-   // Issue the publish command and wait for a response
-   cell_busy = 1;
-   mqtt_result = 0;
-   cell_mqtt_publish_binary(publish_message_buffer, message_len, CELL_MAX_NETWORK_RESPONSE_MS);
-   cell_busy = 0;
-   return mqtt_result;
-}
+   // Transmit the command header and wait for the binary data prompt
+   prompt_received = 0;
+   mqtt_operation_awaiting_ack = MQTT_PUBLISH_BINARY;
+   switch (pub_type)
+   {
+      case CELL_PUB_DEVICE_INFO:
+         cell_send_command(publish_info_message, info_message_length);
+         cell_pending_cmd_len = sizeof(device_info_t);
+         break;
+      case CELL_PUB_ALERT:
+         cell_send_command(publish_alert_message, alert_message_length);
+         cell_pending_cmd_len = sizeof(alert_message_t);
+         break;
+      case CELL_PUB_AUDIO: {
+         const cell_audio_tx_item_t *item = &cell_audio_tx_ring[cell_audio_tx_head];
+         const uint32_t data_len = offsetof(evidence_message_t, data) + item->length;
+         const uint32_t cmd_len = 2 + sizeof(CELL_MQTTSN_PUB_BINARY_AUDIO_MSG) + data_len;
+         cell_send_command(publish_audio_message, cmd_len);
+         cell_pending_cmd_len = data_len;
+         break;
+      }
+   }
+   set_command_timeout(1000 / CELL_TIMER_MS_PER_TICK);
+   cell_step = CELL_STEP_WAIT_PUB_PROMPT;
 
-static uint8_t cell_mqtt_publish_audio(const evidence_message_t *evidence_message, uint16_t evidence_message_length)
-{
-   // Set up the publish transfer buffer
-   arm_copy_q7((q7_t*)CELL_MQTTSN_PUBLISH_AUDIO_MSG, (q7_t*)publish_message_buffer, sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG));
-   publish_message_buffer[MQTTSN_PUBLISH_MSG_QOS_OFFSET] = (device_info.device_config.mqtt_audio_qos > 0) ? '1' : '0';
-   const uint32_t message_len = 2 + sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG) + base85_encode_binary_data(publish_message_buffer + sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG) - 1, (const uint8_t*)evidence_message, offsetof(evidence_message_t, data) + evidence_message_length);
-   arm_copy_q7((q7_t*)"\"\r", (q7_t*)publish_message_buffer + message_len - 3, 2);
+#else
 
-   // Issue the publish command and wait for a response
-   cell_busy = 1;
-   mqtt_result = 0;
-   cell_mqtt_publish_binary(publish_message_buffer, message_len, CELL_MAX_NETWORK_RESPONSE_MS);
-   cell_busy = 0;
-   return mqtt_result;
-}
-
-#endif  // #ifdef CELL_MQTT_USE_BINARY_PUBLISH
-
-static volatile char* cell_mqtt_read(void)
-{
-   // Issue a message read request to the network
-   cell_busy = 1;
-   incoming_message = 0;
-   incoming_message_length = 0;
-   mqtt_operation_awaiting_ack = MQTT_READ;
-   if (!cell_send_command_await_response(CELL_MQTTSN_READ_MSG, sizeof(CELL_MQTTSN_READ_MSG), 16000))
+   // Build the encoded command in the shared buffer and transmit it
+   uint32_t message_len = 0;
+   mqtt_operation_awaiting_ack = MQTT_PUBLISH;
+   switch (pub_type)
+   {
+      case CELL_PUB_DEVICE_INFO:
+         arm_copy_q7((q7_t*)CELL_MQTTSN_PUBLISH_INFO_MSG, (q7_t*)publish_message_buffer, sizeof(CELL_MQTTSN_PUBLISH_INFO_MSG));
+         publish_message_buffer[MQTTSN_PUBLISH_MSG_QOS_OFFSET] = (device_info.device_config.mqtt_device_info_qos > 0) ? '1' : '0';
+         message_len = 2 + sizeof(CELL_MQTTSN_PUBLISH_INFO_MSG) + hex_encode_binary_data(publish_message_buffer + sizeof(CELL_MQTTSN_PUBLISH_INFO_MSG) - 1, (const uint8_t*)&device_info, sizeof(device_info_t));
+         arm_copy_q7((q7_t*)"\"\r", (q7_t*)publish_message_buffer + message_len - 3, 2);
+         break;
+      case CELL_PUB_ALERT: {
+         const alert_message_t *alert = &cell_alert_tx_ring[cell_alert_tx_head];
+         arm_copy_q7((q7_t*)CELL_MQTTSN_PUBLISH_ALERT_MSG, (q7_t*)publish_message_buffer, sizeof(CELL_MQTTSN_PUBLISH_ALERT_MSG));
+         publish_message_buffer[MQTTSN_PUBLISH_MSG_QOS_OFFSET] = (device_info.device_config.mqtt_alert_qos > 0) ? '1' : '0';
+         message_len = 2 + sizeof(CELL_MQTTSN_PUBLISH_ALERT_MSG) + hex_encode_binary_data(publish_message_buffer + sizeof(CELL_MQTTSN_PUBLISH_ALERT_MSG) - 1, (const uint8_t*)alert, sizeof(alert_message_t) - sizeof(alert->events) + (sizeof(event_info_t) * alert->num_events));
+         arm_copy_q7((q7_t*)"\"\r", (q7_t*)publish_message_buffer + message_len - 3, 2);
+         break;
+      }
+      case CELL_PUB_AUDIO: {
+         const cell_audio_tx_item_t *item = &cell_audio_tx_ring[cell_audio_tx_head];
+         arm_copy_q7((q7_t*)CELL_MQTTSN_PUBLISH_AUDIO_MSG, (q7_t*)publish_message_buffer, sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG));
+         publish_message_buffer[MQTTSN_PUBLISH_MSG_QOS_OFFSET] = (device_info.device_config.mqtt_audio_qos > 0) ? '1' : '0';
+         message_len = 2 + sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG) + base85_encode_binary_data(publish_message_buffer + sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG) - 1, (const uint8_t*)&item->message, offsetof(evidence_message_t, data) + item->length);
+         arm_copy_q7((q7_t*)"\"\r", (q7_t*)publish_message_buffer + message_len - 3, 2);
+         break;
+      }
+   }
+   if (mqtt_connected && message_len)
+   {
+      cell_send_command(publish_message_buffer, message_len);
+      set_command_timeout(1000 / CELL_TIMER_MS_PER_TICK);
+      cell_step = CELL_STEP_WAIT_PUB_CMD_ACK;
+   }
+   else
+   {
       mqtt_operation_awaiting_ack = MQTT_DONE;
-   cell_busy = 0;
-   return incoming_message;
+      cell_busy = 0;
+      cell_step = CELL_STEP_IDLE;
+      cell_advance_tx_rings();
+   }
+
+#endif
 }
 
 static void cell_reset_modem(uint8_t hard_reset)
@@ -501,7 +524,7 @@ static void cell_reset_modem(uint8_t hard_reset)
       WRITE_REG(CELL_NRESET_GPIO_Port->BSRR, (uint32_t)CELL_NRESET_Pin << 16U);
       set_command_timeout(100 / CELL_TIMER_MS_PER_TICK);
       cell_modem_available = 0;
-      while (!timed_out);
+      while (!timed_out) cpu_feed_watchdog();
       WRITE_REG(CELL_NRESET_GPIO_Port->BSRR, CELL_NRESET_Pin);
    }
    else
@@ -513,7 +536,10 @@ static void cell_reset_modem(uint8_t hard_reset)
    // Wait until the modem comes back online or times out
    set_command_timeout(CELL_MODEM_STATUS_BOOT_TIME_MS / CELL_TIMER_MS_PER_TICK);
    while (!cell_modem_available && !timed_out)
+   {
+      cpu_feed_watchdog();
       cpu_sleep();
+   }
 }
 
 static void cell_reboot_firmware(uint8_t pdp_reboot)
@@ -567,7 +593,7 @@ static uint8_t cell_configure_modem(void)
          for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(set_client_id_msg, sizeof(set_client_id_msg), 500); ++retries);
          for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_SET_SERVER_ADDR_MSG, sizeof(CELL_SET_SERVER_ADDR_MSG), 500); ++retries);
          for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_SET_CONN_TIMEOUT_MSG, sizeof(CELL_SET_CONN_TIMEOUT_MSG), 500); ++retries);
-         for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_SET_NON_CLEAN_SESSION_MSG, sizeof(CELL_SET_NON_CLEAN_SESSION_MSG), 500); ++retries);
+         for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_SET_CLEAN_SESSION_MSG, sizeof(CELL_SET_CLEAN_SESSION_MSG), 500); ++retries);
          for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_SAVE_MQTTSN_CONFIG_MSG, sizeof(CELL_SAVE_MQTTSN_CONFIG_MSG), 1000); ++retries);
          for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_PDP_CONFIG_MSG, sizeof(CELL_PDP_CONFIG_MSG), 500); ++retries);
          for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_DISABLE_RADIO_MSG, sizeof(CELL_DISABLE_RADIO_MSG), 500); ++retries);
@@ -703,9 +729,9 @@ static void update_device_configuration(volatile char* config_data, uint32_t dat
    device_info.device_config = new_config;
    chip_save_config(0);
 
-   // Transmit a device status message to acknowledge receipt of the configuration change request
-   device_update_timer_count = device_info_update = 0;
-   cell_mqtt_publish_device_info();
+   // Signal that a device status message should be sent to acknowledge receipt of the configuration change
+   device_update_timer_count = 0;
+   device_info_update = 1;
 }
 
 static char* handle_mqtt_message(char* msg, uint16_t max_msg_len, uint8_t is_mqttsn_message)
@@ -746,6 +772,25 @@ static char* handle_mqtt_message(char* msg, uint16_t max_msg_len, uint8_t is_mqt
    if (mqtt_operation == mqtt_operation_awaiting_ack)
       mqtt_operation_awaiting_ack = MQTT_DONE;
    return msg;
+}
+
+static void cell_enqueue_audio(uint16_t evidence_message_length)
+{
+   // Enqueue the current evidence message into the audio ring buffer
+   const uint32_t next_slot = (cell_audio_tx_head + cell_audio_tx_count) % CELL_AUDIO_TX_RING_SIZE;
+   if (cell_audio_tx_count < CELL_AUDIO_TX_RING_SIZE)
+   {
+      cell_audio_tx_ring[next_slot].message = evidence_message;
+      cell_audio_tx_ring[next_slot].length = evidence_message_length;
+      ++cell_audio_tx_count;
+   }
+   else
+   {
+      // Overwrite the oldest evidence message if full
+      cell_audio_tx_ring[cell_audio_tx_head].message = evidence_message;
+      cell_audio_tx_ring[cell_audio_tx_head].length = evidence_message_length;
+      cell_audio_tx_head = (cell_audio_tx_head + 1) % CELL_AUDIO_TX_RING_SIZE;
+   }
 }
 
 static uint16_t cell_process_message(char* msg, uint16_t max_msg_len)
@@ -1302,9 +1347,16 @@ void cell_init(void)
 
 void cell_update_state(void)
 {
-   // Process any outstanding messages that were received since the last invocation
+   // Blocking reconfiguration takes priority; reset non-blocking state to avoid stale operations
    if (configure_modem)
+   {
+      cell_step = CELL_STEP_IDLE;
+      cell_busy = 0;
+      mqtt_operation_awaiting_ack = MQTT_DONE;
       cell_configure_modem();
+   }
+
+   // Handle connectivity changes (blocking is acceptable here)
    if (connectivity_changed)
    {
       // Check whether the device was successfully registered on a network
@@ -1330,31 +1382,154 @@ void cell_update_state(void)
       else if (bad_network_conn_timer_count >= CELL_BAD_CONN_TIMEOUT_MINUTES)
          cell_reboot_firmware(0);
    }
-   if (!cell_busy && device_info_update)
-   {
-      // Poll for the current cell signal quality and publish device status details
-      device_info_update = 0;
-      if (valid_pdp)
-         cell_send_command_await_response(CELL_GET_SIGNAL_QUALITY_MSG, sizeof(CELL_GET_SIGNAL_QUALITY_MSG), 1000);
-      cell_mqtt_publish_device_info();
-   }
-   while (!cell_busy && pending_messages)
-      cell_process_network_message(cell_mqtt_read(), incoming_message_length);
 
-   // Auto-disable test mode after a certain length of time
+   // Auto-disable test mode and mark a device info update as pending
    if (device_info.device_config.test_mode_start_time && ((uint32_t)data.packets[0].timestamp >= (device_info.device_config.test_mode_start_time + TEST_MODE_AUTO_DISABLE_SECONDS)))
    {
-      device_update_timer_count = device_info_update = 0;
+      device_update_timer_count = 0;
       device_info.device_config.test_mode_start_time = 0;
-      cell_mqtt_publish_device_info();
+      device_info_update = 1;
       chip_save_config(0);
+   }
+
+   // Advance the non-blocking steady-state publish state machine
+   switch (cell_step)
+   {
+      case CELL_STEP_WAIT_SIG_QUAL:
+         // Signal quality poll complete — start the device info publish
+         if (command_acked || command_nacked || timed_out)
+            cell_start_nonblocking_publish(CELL_PUB_DEVICE_INFO);
+         return;
+
+#ifdef CELL_MQTT_USE_BINARY_PUBLISH
+
+      case CELL_STEP_WAIT_PUB_PROMPT:
+         // Waiting for the binary data prompt character '>'
+         if (!prompt_received && !timed_out)
+            return;
+         if (prompt_received)
+         {
+            // Prompt received, send the binary payload
+            const char *data_ptr = NULL;
+            uint32_t data_len = cell_pending_cmd_len;
+            in_holdoff_period = 0;
+            switch (cell_pending_pub)
+            {
+               case CELL_PUB_DEVICE_INFO: data_ptr = (const char*)&device_info; break;
+               case CELL_PUB_ALERT: data_ptr = (const char*)&cell_alert_tx_ring[cell_alert_tx_head]; break;
+               case CELL_PUB_AUDIO: data_ptr = (const char*)&cell_audio_tx_ring[cell_audio_tx_head].message; break;
+            }
+            command_acked = command_nacked = 0;
+            cell_send_command((char*)data_ptr, data_len);
+            set_command_timeout(1000 / CELL_TIMER_MS_PER_TICK);
+            cell_step = CELL_STEP_WAIT_PUB_CMD_ACK;
+         }
+         else
+         {
+            // Timed out waiting for prompt
+            mqtt_operation_awaiting_ack = MQTT_DONE;
+            cell_busy = 0;
+            cell_step = CELL_STEP_IDLE;
+            cell_advance_tx_rings();
+         }
+         return;
+
+#endif
+
+      case CELL_STEP_WAIT_PUB_CMD_ACK:
+         // Waiting for the AT command-level "OK" acknowledgment
+         if (command_acked && mqtt_connected)
+         {
+            set_command_timeout(CELL_MAX_NETWORK_RESPONSE_MS / CELL_TIMER_MS_PER_TICK);
+            cell_step = CELL_STEP_WAIT_PUB_NET_ACK;
+         }
+         else if (command_acked || command_nacked || timed_out)
+         {
+            mqtt_operation_awaiting_ack = MQTT_DONE;
+            cell_busy = 0;
+            cell_step = CELL_STEP_IDLE;
+            cell_advance_tx_rings();
+         }
+         return;
+
+      case CELL_STEP_WAIT_PUB_NET_ACK:
+         // Waiting for the network-level publish acknowledgment URC
+         if (mqtt_connected && !timed_out && (mqtt_operation_awaiting_ack != MQTT_DONE))
+            return;
+         cell_busy = 0;
+         cell_step = CELL_STEP_IDLE;
+         cell_advance_tx_rings();
+         return;
+
+      case CELL_STEP_WAIT_MSG_READ:
+         // Waiting for the MQTT-SN message read response
+         if (!command_acked && !command_nacked && !timed_out)
+            return;
+         if (incoming_message)
+            cell_process_network_message(incoming_message, incoming_message_length);
+         cell_busy = 0;
+         cell_step = CELL_STEP_IDLE;
+         return;
+
+      case CELL_STEP_IDLE:
+      default:
+         break;
+   }
+
+   // Start new steady-state operations when the modem is free and connected
+   if (cell_busy || !mqtt_connected)
+      return;
+
+   // Priority 1: publish a pending device info update (poll signal quality first if PDP is active)
+   if (device_info_update)
+   {
+      device_info_update = 0;
+      if (valid_pdp)
+      {
+         command_acked = command_nacked = 0;
+         cell_send_command(CELL_GET_SIGNAL_QUALITY_MSG, sizeof(CELL_GET_SIGNAL_QUALITY_MSG));
+         set_command_timeout(1000 / CELL_TIMER_MS_PER_TICK);
+         cell_step = CELL_STEP_WAIT_SIG_QUAL;
+      }
+      else
+         cell_start_nonblocking_publish(CELL_PUB_DEVICE_INFO);
+      return;
+   }
+
+   // Priority 2: drain any pending incoming messages from the broker
+   if (pending_messages)
+   {
+      cell_busy = 1;
+      incoming_message = 0;
+      incoming_message_length = 0;
+      mqtt_operation_awaiting_ack = MQTT_READ;
+      command_acked = command_nacked = 0;
+      cell_send_command(CELL_MQTTSN_READ_MSG, sizeof(CELL_MQTTSN_READ_MSG));
+      set_command_timeout(16000 / CELL_TIMER_MS_PER_TICK);
+      cell_step = CELL_STEP_WAIT_MSG_READ;
+      return;
+   }
+
+   // Priority 3: drain the outgoing alert ring buffer
+   if (cell_alert_tx_count)
+   {
+      cell_start_nonblocking_publish(CELL_PUB_ALERT);
+      return;
+   }
+
+   // Priority 4: drain the outgoing audio ring buffer
+   if (cell_audio_tx_count)
+   {
+      cell_start_nonblocking_publish(CELL_PUB_AUDIO);
+      return;
    }
 }
 
 uint8_t cell_pending_events(void)
 {
    // Return whether there are any pending events to be handled
-   return configure_modem || connectivity_changed || device_info_update || pending_messages;
+   return configure_modem || connectivity_changed || device_info_update || pending_messages ||
+          cell_alert_tx_count || cell_audio_tx_count || (cell_step != CELL_STEP_IDLE);
 }
 
 void cell_update_device_details(void)
@@ -1381,19 +1556,32 @@ void cell_transmit_alert(alert_message_t *alert)
    alert->sensor_lat = device_info.lat;
    alert->sensor_lon = device_info.lon;
    alert->sensor_ht = device_info.ht;
-   cell_mqtt_publish_alert(alert);
+
+   // Enqueue the alert into a ring buffer
+   if (cell_alert_tx_count < CELL_ALERT_TX_RING_SIZE)
+   {
+      const uint32_t slot = (cell_alert_tx_head + cell_alert_tx_count) % CELL_ALERT_TX_RING_SIZE;
+      cell_alert_tx_ring[slot] = *alert;
+      ++cell_alert_tx_count;
+   }
+   else
+   {
+      // Overwrite the oldest entry if full
+      cell_alert_tx_ring[cell_alert_tx_head] = *alert;
+      cell_alert_tx_head = (cell_alert_tx_head + 1) % CELL_ALERT_TX_RING_SIZE;
+   }
 }
 
 uint8_t cell_transmit_audio(const opus_frame_t *restrict audio_frame, uint8_t is_final_frame)
 {
-   // Append the audio frame to the current evidence packet, sending a full packet and splitting if necessary
+   // Append the audio frame to the current evidence packet, splitting if it would overflow
    static uint16_t evidence_message_idx = 0;
    const uint16_t space_remaining = CELL_EVIDENCE_MAX_PAYLOAD_SIZE - evidence_message_idx;
    const uint16_t to_copy = audio_frame->num_encoded_bytes + offsetof(opus_frame_t, encoded_data);
    if (space_remaining < to_copy)
    {
       arm_copy_q7((q7_t*)audio_frame, (q7_t*)evidence_message.data + evidence_message_idx, space_remaining);
-      cell_mqtt_publish_audio(&evidence_message, evidence_message_idx + space_remaining);
+      cell_enqueue_audio(evidence_message_idx + space_remaining);
       evidence_message_idx = to_copy - space_remaining;
       arm_copy_q7((q7_t*)audio_frame + space_remaining, (q7_t*)evidence_message.data, evidence_message_idx);
       ++evidence_message.message_idx_and_final;
@@ -1404,15 +1592,13 @@ uint8_t cell_transmit_audio(const opus_frame_t *restrict audio_frame, uint8_t is
       evidence_message_idx += to_copy;
    }
 
-   // Send the evidence packet if full or if this is the final audio frame
+   // Enqueue the evidence packet if full or if this is the final audio frame
    const uint8_t transmitted_clip_id = evidence_message.clip_id;
    if (is_final_frame || (evidence_message_idx == CELL_EVIDENCE_MAX_PAYLOAD_SIZE))
    {
-      // Set the "final packet" flag if necessary before sending
       evidence_message.message_idx_and_final |= is_final_frame ? CELL_MQTT_MESSAGE_FINAL_MASK : 0;
-      cell_mqtt_publish_audio(&evidence_message, evidence_message_idx);
+      cell_enqueue_audio(evidence_message_idx);
 
-      // Reset the evidence message metadata
       evidence_message_idx = 0;
       if (is_final_frame)
       {

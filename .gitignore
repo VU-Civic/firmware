@@ -57,5 +57,7 @@ dkms.conf
 # Build Files
 CM4/Debug/
 CM4/Release/
+CM4/sdsim4/
 CM7/Debug/
 CM7/Release/
+CM7/full/
