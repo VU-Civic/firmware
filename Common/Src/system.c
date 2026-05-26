@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <sys/times.h>
+#include "onset_detection.h"
 #include "system.h"
 
 
@@ -15,11 +16,13 @@ __attribute__ ((section (".data_packet")))
 volatile data_packet_container_t data;
 
 
-// Shared Application Variables for Core CM4 ---------------------------------------------------------------------------
+// Shared Application Variables for Core CM4 or CM7 --------------------------------------------------------------------
 
 #ifdef CORE_CM4
 volatile device_info_t device_info = { .firmware_version = FIRMWARE_REVISION };
 volatile uint8_t nvm_config_needs_storage = 0, nvm_needs_reboot = 0;
+#else
+onset_detection_state_t *onset_detection_state;
 #endif
 
 
@@ -318,6 +321,9 @@ void chip_initialize_unused_pins(void)
    CLEAR_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOFEN);
    CLEAR_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOGEN);
    CLEAR_BIT(RCC->AHB4ENR, RCC_AHB4ENR_GPIOHEN);
+
+   // Store a reference to the onset detector state
+   onset_detection_state = onset_detection_create();
 
 #endif
 }

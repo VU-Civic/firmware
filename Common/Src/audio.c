@@ -121,7 +121,7 @@ void MDMA_IRQHandler(void)
 
       // Feed the watchdog timer and process the newly received audio
       cpu_feed_watchdog();
-      onset_detection_invoke(packet_timestamp, audio_data[data.audio_read_index], packet);
+      onset_detection_invoke(onset_detection_state, packet_timestamp, audio_data[data.audio_read_index], packet);
 
       // Alert the other core that onset detection has completed
       if ((HSEM->RLR[CORE_TO_CORE_HSEM_NUMBER] == (HSEM_CR_COREID_CURRENT | HSEM_RLR_LOCK)))
