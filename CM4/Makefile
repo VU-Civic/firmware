@@ -17,6 +17,15 @@ TEST_EXECUTABLE := $(BUILD)/$(TEST_TARGET).elf
 TEST_TRANSMIT_TARGET := Test_Transmit_$(TARGET)
 TEST_TRANSMIT_EXECUTABLE := $(BUILD)/$(TEST_TRANSMIT_TARGET).elf
 
+AWSPROV_TARGET := Provision_$(TARGET)
+AWSPROV_EXECUTABLE := $(BUILD)/$(AWSPROV_TARGET).elf
+
+ifneq ($(filter provision flashprovision,$(MAKECMDGOALS)),)
+  ifeq ($(IMEI),)
+    $(error IMEI is required: make provision IMEI=<15-digit-imei> BOARD_REV=<rev>)
+  endif
+endif
+
 ifndef BOARD_REV
 $(error You must specify a BOARD_REV (A, B, etc) to continue)
 endif
@@ -72,6 +81,10 @@ sd4: CFLAGS += -Ofast
 sd4: DEFINES += -DDISABLE_EVIDENCE_XMIT -DPACKET_FULL_AUDIO
 sd4: directories $(SD_EXECUTABLE)
 
+provision: CFLAGS += -Ofast
+provision: DEFINES += -DDEVICE_CERT_FILE=Testing/certs/$(IMEI)/device_cert.pem -DDEVICE_KEY_FILE=Testing/certs/$(IMEI)/device_key.pem
+provision: directories $(AWSPROV_EXECUTABLE)
+
 transmit: CFLAGS += -Ofast
 transmit: DEFINES += -DSIM_REQUIRED
 transmit: directories $(TEST_TRANSMIT_EXECUTABLE)
@@ -91,6 +104,9 @@ $(EXECUTABLE) $(MAP_FILE): $(OBJECTS) $(BUILD)/main.o
 	$(CC) -o $@ -T$(LINKER_FILE) $^ $(LFLAGS)
 
 $(SD_EXECUTABLE): $(OBJECTS) $(BUILD)/sdcard.o
+	$(CC) -o $@ -T$(LINKER_FILE) $^ $(LFLAGS)
+
+$(AWSPROV_EXECUTABLE): $(OBJECTS) $(BUILD)/store_aws_config.o
 	$(CC) -o $@ -T$(LINKER_FILE) $^ $(LFLAGS)
 
 $(TEST_TRANSMIT_EXECUTABLE): $(OBJECTS) $(BUILD)/cell_transmit.o
@@ -120,10 +136,13 @@ flash: all
 flashsd:
 	$(FLASH) -c port=SWD mode=UR -d $(SD_EXECUTABLE) 0x08100000 -v
 
+flashprovision: provision
+	$(FLASH) -c port=SWD mode=UR -d $(AWSPROV_EXECUTABLE) 0x08100000 -v
+
 flashtransmit: transmit
 	$(FLASH) -c port=SWD mode=UR -d $(TEST_TRANSMIT_EXECUTABLE) 0x08100000 -v
 
 flashtest: test
 	$(FLASH) -c port=SWD mode=UR -d $(TEST_EXECUTABLE) 0x08100000 -v
 
-.PHONY: all debug sdsim sdsim4 sd1 sd4 transmit test directories secondary-outputs clean flash flashsd flashtransmit flashtest
+.PHONY: all debug sdsim sdsim4 sd1 sd4 provision transmit test directories secondary-outputs clean flash flashsd flashprovision flashtransmit flashtest

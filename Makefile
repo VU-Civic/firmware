@@ -15,9 +15,20 @@ ifndef STM32_PRG_PATH
 $(error You must add $(FLASH) to the PATH or specify the STM32_PRG_PATH to continue)
 endif
 
-.PHONY: all sdsim sdsim4 sd1 sd4 transmit test CM4 CM7 sd1CM4 sd4CM4 fullCM7 testCM4 testCM7 flash clean
+ifneq ($(filter provision flashprovision,$(MAKECMDGOALS)),)
+  ifeq ($(IMEI),)
+    $(error IMEI is required: make BOARD_REV=<rev> IMEI=<15-digit-imei> provision)
+  endif
+endif
+
+.PHONY: all provision sdsim sdsim4 sd1 sd4 transmit test CM4 CM7 sd1CM4 sd4CM4 fullCM7 testCM4 testCM7 flash clean
 
 all: CM4 CM7
+
+provision: CM7
+	$(MAKE) -C CM4 provision $(IMEI)
+	$(MAKE) -C CM4 flashprovision $(IMEI)
+	$(MAKE) -C CM7 flash
 
 sdsim: sdsimCM4 CM7
 	$(MAKE) -C CM4 flashsd
