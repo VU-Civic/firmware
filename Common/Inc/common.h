@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "main.h"
+#include "config_private.h"
 
 
 // Custom Application Definitions --------------------------------------------------------------------------------------
@@ -27,20 +28,13 @@
 #define AUDIO_BUFFER_SAMPLES_PER_CHANNEL     (AUDIO_BUFFER_SAMPLES / AUDIO_NUM_CHANNELS)
 #define AUDIO_NUM_DMAS_PER_CLIP              (AUDIO_SAMPLE_RATE_HZ * AUDIO_NUM_CHANNELS / AUDIO_BUFFER_SAMPLES)
 
-#define CELL_CONNECTION_TIMEOUT_SECONDS      65520
+#define CELL_CONNECTION_TIMEOUT_SECONDS      3600
 #define CELL_BAD_CONN_TIMEOUT_MINUTES        10
 #define CELL_BAD_PDP_TIMEOUT_MINUTES         2
 #define CELL_BAD_MQTT_TIMEOUT_MINUTES        5
 #define CELL_SERVER_RESPONSE_TIMEOUT_SECONDS 5
 #define CELL_IMEI_LENGTH                     15
 #define CELL_IMSI_LENGTH                     15
-#define CELL_MQTT_BROKER_APN                 tsudp
-#define CELL_MQTT_BROKER_IP                  10.7.0.55
-#define CELL_MQTT_BROKER_PORT                2442
-#define CELL_MQTT_ALERT_TOPIC                111
-#define CELL_MQTT_EVIDENCE_TOPIC             234
-#define CELL_MQTT_DEVICES_TOPIC              35543
-#define CELL_MQTT_CONTROL_TOPIC              24553
 #ifdef CELL_MQTT_USE_BINARY_PUBLISH
 #define CELL_MQTT_MAX_PAYLOAD_SIZE_BYTES     1016
 #else

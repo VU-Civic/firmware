@@ -1,3 +1,6 @@
+# Private config files
+config_private.h
+
 # Prerequisites
 *.d
 
@@ -58,6 +61,11 @@ dkms.conf
 CM4/Debug/
 CM4/Release/
 CM4/sdsim4/
+CM4/bin/
 CM7/Debug/
 CM7/Release/
 CM7/full/
+CM7/bin/
+
+# Keys and Certificates
+**/certs/
