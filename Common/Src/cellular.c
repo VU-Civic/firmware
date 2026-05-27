@@ -226,7 +226,7 @@ static dma_int_registers_t *dma_int_registers;
 static char publish_info_message[MQTT_SUBSCRIBE_MSG_MAX_SIZE];
 static char publish_alert_message[MQTT_SUBSCRIBE_MSG_MAX_SIZE];
 static char publish_audio_message[MQTT_SUBSCRIBE_MSG_MAX_SIZE];
-static uint32_t info_message_length, alert_message_length, audio_prefix_length, cell_pending_cmd_len;
+static uint32_t info_message_length, alert_prefix_length, audio_prefix_length, cell_pending_cmd_len;
 #endif
 
 static evidence_message_t evidence_message;
@@ -539,9 +539,11 @@ static void cell_start_nonblocking_publish(cell_pub_type_t pub_type)
       case CELL_PUB_DEVICE_INFO:
          cell_send_command(publish_info_message, info_message_length);
          break;
-      case CELL_PUB_ALERT:
-         cell_send_command(publish_alert_message, alert_message_length);
+      case CELL_PUB_ALERT: {
+         const uint32_t cmd_len = (uint32_t)snprintf(publish_message_buffer, sizeof(publish_message_buffer), "%.*s%u\r", (int)alert_prefix_length, publish_alert_message, (unsigned)params.len) + 1;
+         cell_send_command(publish_message_buffer, cmd_len);
          break;
+      }
       case CELL_PUB_AUDIO: {
          // Audio length varies per packet so build the full command dynamically
          const uint32_t cmd_len = (uint32_t)snprintf(publish_message_buffer, sizeof(publish_message_buffer), "%.*s%u\r", (int)audio_prefix_length, publish_audio_message, (unsigned)params.len) + 1;
@@ -684,7 +686,7 @@ static uint8_t cell_configure_modem(void)
       snprintf(mqtt_subscribe_msg, sizeof(mqtt_subscribe_msg), "AT+UMQTTC=4,1,\"" CELL_MQTT_TOPIC_NAMESPACE "/%.*s/" CELL_MQTT_CONTROL_TOPIC "\"\r", CELL_IMEI_LENGTH, (const char*)data.packets[0].imei);
 #ifdef CELL_MQTT_USE_BINARY_PUBLISH
       info_message_length = (uint32_t)snprintf(publish_info_message, sizeof(publish_info_message), "AT+UMQTTC=9,%c,0,\"%s\",%u\r", (device_info.device_config.mqtt_device_info_qos > 0) ? '1' : '0', broker_topic_info, (unsigned)sizeof(device_info_t)) + 1;
-      alert_message_length = (uint32_t)snprintf(publish_alert_message, sizeof(publish_alert_message), "AT+UMQTTC=9,%c,0,\"%s\",%u\r", (device_info.device_config.mqtt_alert_qos > 0) ? '1' : '0', broker_topic_alert, (unsigned)sizeof(alert_message_t)) + 1;
+      alert_prefix_length = (uint32_t)snprintf(publish_alert_message, sizeof(publish_alert_message), "AT+UMQTTC=9,%c,0,\"%s\",", (device_info.device_config.mqtt_alert_qos > 0) ? '1' : '0', broker_topic_alert);
       audio_prefix_length = (uint32_t)snprintf(publish_audio_message, sizeof(publish_audio_message), "AT+UMQTTC=9,%c,0,\"%s\",", (device_info.device_config.mqtt_audio_qos > 0) ? '1' : '0', broker_topic_audio);
 #endif
 
@@ -1282,9 +1284,8 @@ void cell_init(void)
    info_message_length = sizeof(CELL_MQTTSN_PUB_BINARY_INFO_MSG);
    memcpy(publish_info_message, CELL_MQTTSN_PUB_BINARY_INFO_MSG, sizeof(CELL_MQTTSN_PUB_BINARY_INFO_MSG));
    info_message_length += sprintf(publish_info_message + sizeof(CELL_MQTTSN_PUB_BINARY_INFO_MSG) - 1, "%u\r", sizeof(device_info_t));
-   alert_message_length = sizeof(CELL_MQTTSN_PUB_BINARY_ALERT_MSG);
-   memcpy(publish_alert_message, CELL_MQTTSN_PUB_BINARY_ALERT_MSG, sizeof(CELL_MQTTSN_PUB_BINARY_ALERT_MSG));
-   alert_message_length += sprintf(publish_alert_message + sizeof(CELL_MQTTSN_PUB_BINARY_ALERT_MSG) - 1, "%u\r", sizeof(alert_message_t));
+   alert_prefix_length = sizeof(CELL_MQTTSN_PUB_BINARY_ALERT_MSG) - 1;
+   memcpy(publish_alert_message, CELL_MQTTSN_PUB_BINARY_ALERT_MSG, alert_prefix_length + 1);
    audio_prefix_length = sizeof(CELL_MQTTSN_PUB_BINARY_AUDIO_MSG) - 1;
    memcpy(publish_audio_message, CELL_MQTTSN_PUB_BINARY_AUDIO_MSG, audio_prefix_length + 1);
 #endif
