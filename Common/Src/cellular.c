@@ -249,8 +249,7 @@ static volatile char sim_id[SIM_CARD_ID_MAX_LENGTH+1], *incoming_message = 0;
 static volatile uint32_t incoming_message_length, baud_rate = 0, cme_error = 0;
 
 #ifndef USE_MQTT_SN
-static char mqtt_subscribe_msg[MQTT_SUBSCRIBE_MSG_MAX_SIZE], broker_topic_info[MQTT_TOPIC_MAX_SIZE];
-static char broker_topic_alert[MQTT_TOPIC_MAX_SIZE], broker_topic_audio[MQTT_TOPIC_MAX_SIZE];
+static char broker_topic_info[MQTT_TOPIC_MAX_SIZE], broker_topic_alert[MQTT_TOPIC_MAX_SIZE], broker_topic_audio[MQTT_TOPIC_MAX_SIZE];
 #endif  // #ifndef USE_MQTT_SN
 
 
@@ -387,27 +386,42 @@ static void cell_mqtt_subscribe(void)
       return;
    }
 
-   // Try to subscribe in a loop until success or the network disconnects
-   cell_busy = 1;
-   do
+   // Create the relevant subscription messages
+#ifndef USE_MQTT_SN
+   for (int i = 0; i < 2; ++i)
    {
-      // Issue the subscription command and wait until it is acknowledged by the network
-      mqtt_result = 0;
-      mqtt_operation_awaiting_ack = MQTT_SUBSCRIBE;
-#ifdef USE_MQTT_SN
-      cell_send_command_await_response(CELL_MQTTSN_SUBSCRIBE_MSG, sizeof(CELL_MQTTSN_SUBSCRIBE_MSG), 1000);
-#else
-      cell_send_command_await_response(mqtt_subscribe_msg, (uint32_t)strlen(mqtt_subscribe_msg) + 1, 1000);
+      char mqtt_subscribe_msg[MQTT_SUBSCRIBE_MSG_MAX_SIZE];
+      if (i == 0)
+         snprintf(mqtt_subscribe_msg, sizeof(mqtt_subscribe_msg), "AT+UMQTTC=4,1,\"" CELL_MQTT_TOPIC_NAMESPACE "/%.*s/" CELL_MQTT_CONTROL_TOPIC "\"\r", CELL_IMEI_LENGTH, (const char*)data.packets[0].imei);
+      else
+         snprintf(mqtt_subscribe_msg, sizeof(mqtt_subscribe_msg), "AT+UMQTTC=4,1,\"" CELL_MQTT_TOPIC_NAMESPACE "/-1/" CELL_MQTT_CONTROL_TOPIC "\"\r");
 #endif
-      set_command_timeout(5000 / CELL_TIMER_MS_PER_TICK);
-      while (mqtt_connected && !timed_out && (mqtt_operation_awaiting_ack != MQTT_DONE))
+
+      // Try to subscribe in a loop until success or the network disconnects
+      cell_busy = 1;
+      do
       {
-         cpu_feed_watchdog();
-         cpu_sleep();
-      }
-   } while (!mqtt_result && mqtt_connected);
-   mqtt_subscribed = mqtt_result;
-   cell_busy = 0;
+         // Issue the subscription command and wait until it is acknowledged by the network
+         mqtt_result = 0;
+         mqtt_operation_awaiting_ack = MQTT_SUBSCRIBE;
+#ifdef USE_MQTT_SN
+         cell_send_command_await_response(CELL_MQTTSN_SUBSCRIBE_MSG, sizeof(CELL_MQTTSN_SUBSCRIBE_MSG), 1000);
+#else
+         cell_send_command_await_response(mqtt_subscribe_msg, (uint32_t)strlen(mqtt_subscribe_msg) + 1, 1000);
+#endif
+         set_command_timeout(5000 / CELL_TIMER_MS_PER_TICK);
+         while (mqtt_connected && !timed_out && (mqtt_operation_awaiting_ack != MQTT_DONE))
+         {
+            cpu_feed_watchdog();
+            cpu_sleep();
+         }
+      } while (!mqtt_result && mqtt_connected);
+      mqtt_subscribed = mqtt_result;
+      cell_busy = 0;
+
+#ifndef USE_MQTT_SN
+   }
+#endif
 }
 
 #ifndef CELL_MQTT_USE_BINARY_PUBLISH
@@ -683,7 +697,6 @@ static uint8_t cell_configure_modem(void)
       snprintf(broker_topic_info, sizeof(broker_topic_info), CELL_MQTT_TOPIC_NAMESPACE "/%.*s/" CELL_MQTT_DEVICES_TOPIC, CELL_IMEI_LENGTH, (const char*)data.packets[0].imei);
       snprintf(broker_topic_alert, sizeof(broker_topic_alert), CELL_MQTT_TOPIC_NAMESPACE "/%.*s/" CELL_MQTT_ALERT_TOPIC, CELL_IMEI_LENGTH, (const char*)data.packets[0].imei);
       snprintf(broker_topic_audio, sizeof(broker_topic_audio), CELL_MQTT_TOPIC_NAMESPACE "/%.*s/" CELL_MQTT_EVIDENCE_TOPIC, CELL_IMEI_LENGTH, (const char*)data.packets[0].imei);
-      snprintf(mqtt_subscribe_msg, sizeof(mqtt_subscribe_msg), "AT+UMQTTC=4,1,\"" CELL_MQTT_TOPIC_NAMESPACE "/%.*s/" CELL_MQTT_CONTROL_TOPIC "\"\r", CELL_IMEI_LENGTH, (const char*)data.packets[0].imei);
 #ifdef CELL_MQTT_USE_BINARY_PUBLISH
       info_message_length = (uint32_t)snprintf(publish_info_message, sizeof(publish_info_message), "AT+UMQTTC=9,%c,0,\"%s\",%u\r", (device_info.device_config.mqtt_device_info_qos > 0) ? '1' : '0', broker_topic_info, (unsigned)sizeof(device_info_t)) + 1;
       alert_prefix_length = (uint32_t)snprintf(publish_alert_message, sizeof(publish_alert_message), "AT+UMQTTC=9,%c,0,\"%s\",", (device_info.device_config.mqtt_alert_qos > 0) ? '1' : '0', broker_topic_alert);
