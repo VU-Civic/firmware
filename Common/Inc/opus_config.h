@@ -3,12 +3,14 @@
 
 #include "common.h"
 
+#define OPUS_FRAME_MAX_BYTES (4 * (((OPUS_ENCODED_BIT_RATE/8) + (1000/OPUS_MS_PER_FRAME) - 1) / (1000/OPUS_MS_PER_FRAME)))
+
 struct __attribute__ ((__packed__, aligned (4))) opus_frame_t;
 
 typedef struct __attribute__ ((__packed__, aligned (4))) opus_frame_t
 {
    uint8_t frame_delimiter, num_encoded_bytes;
-   uint8_t encoded_data[2 * ((OPUS_ENCODED_BIT_RATE/8) / (1000/OPUS_MS_PER_FRAME))];
+   uint8_t encoded_data[OPUS_FRAME_MAX_BYTES];
    struct opus_frame_t *next;
 } opus_frame_t;
 

@@ -41,7 +41,7 @@ MKDIR := mkdir -p
 RM := rm -rf
 FLASH := STM32_Programmer_CLI
 
-DEFINES := -D_DATETIME=$(shell date +%s) -D_FW_REVISION=$(shell cd .. && git log --pretty=format:'%H' -n 1 | cut -c 1-8) -DCORE_CM4 -DUSE_HAL_DRIVER -DSTM32H745xx -DUSE_PWR_LDO_SUPPLY -DUSBD_MAX_POWER=250 -DBOARD_REV=$(BOARD_REV)
+DEFINES := -D_DATETIME=$(shell date +%s) -D_FW_REVISION=$(shell cd .. && git log --pretty=format:'%H' -n 1 | cut -c 1-8) -DCORE_CM4 -DUSE_HAL_DRIVER -DSTM32H745xx -DUSE_PWR_LDO_SUPPLY -DUSBD_MAX_POWER=250 -DUSE_MQTT_SN -DBOARD_REV=$(BOARD_REV)
 
 VPATH := ../Common/Src Core/Src Core/Startup ../Drivers/STM32H7xx_HAL_Driver/Src ../Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Src ../Middlewares/ST/STM32_USB_Device_Library/Core/Src
 INCLUDES := -I../Common/Inc -ICore/Inc -I../Drivers/STM32H7xx_HAL_Driver/Inc -I../Drivers/CMSIS/Include -I../Drivers/CMSIS/Device/ST/STM32H7xx/Include -I../Drivers/CMSIS_DSP/Include -I../Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc -I../Middlewares/ST/STM32_USB_Device_Library/Core/Inc

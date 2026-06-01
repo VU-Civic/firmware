@@ -38,7 +38,7 @@
 #ifdef CELL_MQTT_USE_BINARY_PUBLISH
 #define CELL_MQTT_MAX_PAYLOAD_SIZE_BYTES     1016
 #else
-#define CELL_MQTT_MAX_PAYLOAD_SIZE_BYTES     812
+#define CELL_MQTT_MAX_PAYLOAD_SIZE_BYTES     762
 #endif
 #define CELL_MQTT_MESSAGE_INDEX_MASK         0x7F
 #define CELL_MQTT_MESSAGE_FINAL_MASK         0x80
@@ -166,8 +166,7 @@ typedef struct __attribute__ ((__packed__, aligned (16)))
    channel_alarms_t channel_alarms;
    uint8_t onset_detected;
    double onset_timestamp;
-   float onset_magnitude;
-   float angle_of_arrival[3];
+   float onset_magnitude, angle_of_arrival[3];
    uint8_t reserved[9];
    uint8_t end_delimiter[4];
 } data_packet_t;

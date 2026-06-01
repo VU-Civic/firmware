@@ -441,44 +441,45 @@ static uint32_t hex_encode_binary_data(char *output, const uint8_t *input, uint3
    return input_num_bytes * 2;
 }
 
-static uint32_t base85_encode_binary_data(char *output, const uint8_t *input, uint32_t input_num_bytes)
+static uint32_t base64_encode_binary_data(char* output, const uint8_t* input, uint32_t inputNumBytes)
 {
-   // Iterate through all input bytes in groups of 4
-   uint32_t in_idx = 0, out_idx = 0;
-   const uint32_t four_byte_packets = input_num_bytes >> 2;
-   for (uint32_t i = 0; i < four_byte_packets; ++i, in_idx += 4, out_idx += 5)
-   {
-      uint32_t val = ((uint32_t)input[in_idx] << 24) | ((uint32_t)input[in_idx + 1] << 16) | ((uint32_t)input[in_idx + 2] << 8) | ((uint32_t)input[in_idx + 3]);
-      uint32_t q = (uint32_t)(((uint64_t)val * 3233857729ULL) >> 38);
-      output[out_idx + 4] = '%' + (val - (q * 85));
-      val = q; q = (uint32_t)(((uint64_t)val * 3233857729ULL) >> 38);
-      output[out_idx + 3] = '%' + (val - (q * 85));
-      val = q; q = (uint32_t)(((uint64_t)val * 3233857729ULL) >> 38);
-      output[out_idx + 2] = '%' + (val - (q * 85));
-      val = q; q = (uint32_t)(((uint64_t)val * 3233857729ULL) >> 38);
-      output[out_idx + 1] = '%' + (val - (q * 85));
-      output[out_idx] = '%' + q;
-   }
+  // The standard Base64 alphabet table
+  static const char encodingTable[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-   // Pad and encode any remaining bytes
-   const uint32_t remaining = input_num_bytes - in_idx;
-   if (remaining > 0)
-   {
-      // Pad with zeros to form a full 32-bit value
-      uint32_t val = 0;
-      for (uint32_t j = 0; j < remaining; ++j)
-         val |= (uint32_t)input[in_idx + j] << (24 - (j * 8));
-      char encoded[5];
-      for (int j = 4; j >= 0; --j)
-      {
-         uint32_t q = (uint32_t)(((uint64_t)val * 3233857729ULL) >> 38);
-         encoded[j] = '%' + (val - (q * 85));
-         val = q;
-      }
-      for (uint32_t j = 0; j < remaining + 1; ++j)
-         output[out_idx++] = encoded[j];
-   }
-   return out_idx;
+  // Iterate through all input characters in groups of 3 bytes
+  uint32_t inIdx = 0, outIdx = 0;
+  const uint32_t threeBytePackets = inputNumBytes / 3;
+  for (uint32_t i = 0; i < threeBytePackets; ++i, inIdx += 3, outIdx += 4)
+  {
+    const uint32_t a = input[inIdx], b = input[inIdx + 1], c = input[inIdx + 2];
+    const uint32_t triple = (a << 16) + (b << 8) + c;
+    output[outIdx] = encodingTable[(triple >> 18) & 0x3F];
+    output[outIdx + 1] = encodingTable[(triple >> 12) & 0x3F];
+    output[outIdx + 2] = encodingTable[(triple >> 6) & 0x3F];
+    output[outIdx + 3] = encodingTable[triple & 0x3F];
+  }
+
+  // Pad and encode any remaining bytes
+  const uint32_t remaining = inputNumBytes - inIdx;
+  if (remaining == 1)
+  {
+    const uint32_t triple = (uint32_t)input[inIdx] << 16;
+    output[outIdx] = encodingTable[(triple >> 18) & 0x3F];
+    output[outIdx + 1] = encodingTable[(triple >> 12) & 0x3F];
+    output[outIdx + 2] = '=';
+    output[outIdx + 3] = '=';
+    outIdx += 4;
+  }
+  else if (remaining == 2)
+  {
+    const uint32_t triple = ((uint32_t)input[inIdx] << 16) | ((uint32_t)input[inIdx + 1] << 8);
+    output[outIdx] = encodingTable[(triple >> 18) & 0x3F];
+    output[outIdx + 1] = encodingTable[(triple >> 12) & 0x3F];
+    output[outIdx + 2] = encodingTable[(triple >> 6) & 0x3F];
+    output[outIdx + 3] = '=';
+    outIdx += 4;
+  }
+  return outIdx;
 }
 
 #endif  // #ifndef CELL_MQTT_USE_BINARY_PUBLISH
@@ -585,7 +586,7 @@ static void cell_start_nonblocking_publish(cell_pub_type_t pub_type)
    arm_copy_q7((q7_t*)prefix, (q7_t*)publish_message_buffer, prefix_size);
    publish_message_buffer[MQTTSN_PUBLISH_MSG_QOS_OFFSET] = params.qos;
    const uint32_t encoded = (pub_type == CELL_PUB_AUDIO) ?
-      base85_encode_binary_data(publish_message_buffer + prefix_size - 1, params.data, params.len) :
+      base64_encode_binary_data(publish_message_buffer + prefix_size - 1, params.data, params.len) :
       hex_encode_binary_data(publish_message_buffer + prefix_size - 1, params.data, params.len);
    arm_copy_q7((q7_t*)"\"\r", (q7_t*)publish_message_buffer + prefix_size - 1 + encoded, 2);
    message_len = 2 + prefix_size + encoded;
@@ -596,7 +597,7 @@ static void cell_start_nonblocking_publish(cell_pub_type_t pub_type)
    static const char * const broker_topics[3] = { broker_topic_info, broker_topic_alert, broker_topic_audio };
    const uint32_t pfx = (uint32_t)snprintf(publish_message_buffer, sizeof(publish_message_buffer), "AT+UMQTTC=2,%c,0,\"%s\",\"", params.qos, broker_topics[pub_type]);
    const uint32_t encoded = (pub_type == CELL_PUB_AUDIO) ?
-      base85_encode_binary_data(publish_message_buffer + pfx, params.data, params.len) :
+      base64_encode_binary_data(publish_message_buffer + pfx, params.data, params.len) :
       hex_encode_binary_data(publish_message_buffer + pfx, params.data, params.len);
    arm_copy_q7((q7_t*)"\"\r", (q7_t*)publish_message_buffer + pfx + encoded, 2);
    message_len = pfx + encoded + 3;
