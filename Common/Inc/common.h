@@ -225,8 +225,6 @@ typedef enum
    CELL_AUDIO_TRANSMIT_END
 } cell_audio_transmit_command_t;
 
-typedef struct onset_detection_state_t onset_detection_state_t;
-
 
 // Shared Application Variables for Both Cores -------------------------------------------------------------------------
 
@@ -237,8 +235,6 @@ extern volatile data_packet_container_t data;
 
 #ifdef CORE_CM4
 extern volatile device_info_t device_info;
-#else
-extern onset_detection_state_t *onset_detection_state;
 #endif
 
 #endif  // #ifndef __COMMON_HEADER_H__

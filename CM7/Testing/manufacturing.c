@@ -182,7 +182,7 @@ int main(void)
 
    // Initialize user peripherals and algorithms
    chip_initialize_unused_pins();
-   onset_detection_init(onset_detection_state);
+   onset_detection_init();
    audio_init();
    audio_start();
    cpu_init();
