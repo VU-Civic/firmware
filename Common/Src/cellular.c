@@ -108,11 +108,13 @@
 #define CELL_MQTTSN_CONNECT_MSG           "AT+UMQTTSNC=1\r"
 #define CELL_MQTTSN_REGISTER_MSG          "AT+UMQTTSNC=2,"
 #define CELL_MQTTSN_PUBLISH_INFO_MSG      "AT+UMQTTSNC=4,0,0,1,1,\"" STRINGIZE(CELL_MQTT_DEVICES_TOPIC) "\",\""
-#define CELL_MQTTSN_PUBLISH_ALERT_MSG     "AT+UMQTTSNC=4,1,0,1,1,\"" STRINGIZE(CELL_MQTT_ALERT_TOPIC) "\",\""
+#define CELL_MQTTSN_PUBLISH_ALERT_MSG     "AT+UMQTTSNC=4,0,0,1,1,\"" STRINGIZE(CELL_MQTT_ALERT_TOPIC) "\",\""
 #define CELL_MQTTSN_PUBLISH_AUDIO_MSG     "AT+UMQTTSNC=4,0,0,0,1,\"" STRINGIZE(CELL_MQTT_EVIDENCE_TOPIC) "\",\""
-#define CELL_MQTTSN_PUB_BINARY_INFO_MSG   "AT+UMQTTSNC=12,1,0,1,\"" STRINGIZE(CELL_MQTT_DEVICES_TOPIC) "\","
-#define CELL_MQTTSN_PUB_BINARY_ALERT_MSG  "AT+UMQTTSNC=12,1,0,1,\"" STRINGIZE(CELL_MQTT_ALERT_TOPIC) "\","
+#define CELL_MQTTSN_PUBLISH_ONSETS_MSG    "AT+UMQTTSNC=4,0,0,0,1,\"" STRINGIZE(CELL_MQTT_ONSETS_TOPIC) "\",\""
+#define CELL_MQTTSN_PUB_BINARY_INFO_MSG   "AT+UMQTTSNC=12,0,0,1,\"" STRINGIZE(CELL_MQTT_DEVICES_TOPIC) "\","
+#define CELL_MQTTSN_PUB_BINARY_ALERT_MSG  "AT+UMQTTSNC=12,0,0,1,\"" STRINGIZE(CELL_MQTT_ALERT_TOPIC) "\","
 #define CELL_MQTTSN_PUB_BINARY_AUDIO_MSG  "AT+UMQTTSNC=12,0,0,1,\"" STRINGIZE(CELL_MQTT_EVIDENCE_TOPIC) "\","
+#define CELL_MQTTSN_PUB_BINARY_ONSETS_MSG "AT+UMQTTSNC=12,0,0,1,\"" STRINGIZE(CELL_MQTT_ONSETS_TOPIC) "\","
 #define CELL_MQTTSN_SUBSCRIBE_MSG         "AT+UMQTTSNC=5,1,1,\"" STRINGIZE(CELL_MQTT_CONTROL_TOPIC) "\"\r"
 #define CELL_MQTTSN_READ_MSG              "AT+UMQTTSNC=9,1\r"
 #define CELL_GET_MQTTSN_ERROR_MSG         "AT+UMQTTSNER\r"
@@ -207,6 +209,7 @@ typedef enum
    CELL_PUB_DEVICE_INFO = 0,
    CELL_PUB_ALERT,
    CELL_PUB_AUDIO,
+   CELL_PUB_ONSET_HISTORY,
 } cell_pub_type_t;
 
 
@@ -227,7 +230,9 @@ static dma_int_registers_t *dma_int_registers;
 static char publish_info_message[MQTT_SUBSCRIBE_MSG_MAX_SIZE];
 static char publish_alert_message[MQTT_SUBSCRIBE_MSG_MAX_SIZE];
 static char publish_audio_message[MQTT_SUBSCRIBE_MSG_MAX_SIZE];
-static uint32_t info_message_length, alert_prefix_length, audio_prefix_length, cell_pending_cmd_len;
+static char publish_onsets_message[MQTT_SUBSCRIBE_MSG_MAX_SIZE];
+static uint32_t info_message_length, alert_prefix_length, audio_prefix_length;
+static uint32_t onsets_prefix_length, cell_pending_cmd_len;
 #endif
 
 static evidence_message_t evidence_message;
@@ -243,7 +248,7 @@ static volatile mqtt_operation_t mqtt_operation_awaiting_ack = MQTT_DONE;
 static volatile uint8_t mqtt_result = 0, pending_messages = 0, connectivity_changed = 0, signal_power = 255;
 static volatile uint8_t cell_modem_available = 0, configure_modem = 0, mqtt_connected = 0, signal_quality = 255;
 static volatile uint8_t valid_cgreg = 0, valid_cereg = 0, valid_pdp = 0, temperature_alert = 0, reading_imsi = 0;
-static volatile uint8_t cell_busy = 0, device_info_update = 0, mqtt_configured = 0, prompt_received = 0;
+static volatile uint8_t cell_busy = 0, device_info_update = 0, mqtt_configured = 0, prompt_received = 0, onset_history_pending = 0;
 static volatile uint8_t device_update_timer_count = 0, bad_network_conn_timer_count = 0, bad_pdp_timer_count = 0;
 static volatile uint8_t command_acked = 0, command_nacked = 0, timed_out = 0, in_holdoff_period = 0;
 static volatile uint8_t mqtt_connect_pending = 0, bad_mqtt_conn_timer_count = 0, mqtt_subscribed = 0;
@@ -251,7 +256,8 @@ static volatile char sim_id[SIM_CARD_ID_MAX_LENGTH+1], *incoming_message = 0;
 static volatile uint32_t incoming_message_length, baud_rate = 0, cme_error = 0;
 
 #ifndef USE_MQTT_SN
-static char broker_topic_info[MQTT_TOPIC_MAX_SIZE], broker_topic_alert[MQTT_TOPIC_MAX_SIZE], broker_topic_audio[MQTT_TOPIC_MAX_SIZE];
+static char broker_topic_info[MQTT_TOPIC_MAX_SIZE], broker_topic_alert[MQTT_TOPIC_MAX_SIZE];
+static char broker_topic_audio[MQTT_TOPIC_MAX_SIZE], broker_topic_onsets[MQTT_TOPIC_MAX_SIZE];
 #endif  // #ifndef USE_MQTT_SN
 
 
@@ -507,6 +513,10 @@ static void cell_advance_tx_rings(void)
          --cell_audio_tx_count;
       }
    }
+
+   // Clear the onset history pending flag if it was just sent
+   else if (cell_pending_pub == CELL_PUB_ONSET_HISTORY)
+      onset_history_pending = 0;
 }
 
 static pub_params_t cell_get_pub_params(cell_pub_type_t pub_type)
@@ -533,6 +543,11 @@ static pub_params_t cell_get_pub_params(cell_pub_type_t pub_type)
          params.qos = device_info.device_config.mqtt_audio_qos ? '1' : '0';
          break;
       }
+      case CELL_PUB_ONSET_HISTORY:
+         params.data = (const uint8_t*)&historical_onset_message;
+         params.len = (uint32_t)(offsetof(historical_onset_message_t, onsets) + (sizeof(historical_onset_t) * historical_onset_message.num_onsets));
+         params.qos = '0';
+         break;
    }
    return params;
 }
@@ -568,6 +583,11 @@ static void cell_start_nonblocking_publish(cell_pub_type_t pub_type)
          cell_send_command(publish_message_buffer, cmd_len);
          break;
       }
+      case CELL_PUB_ONSET_HISTORY: {
+         const uint32_t cmd_len = (uint32_t)snprintf(publish_message_buffer, sizeof(publish_message_buffer), "%.*s%u\r", (int)onsets_prefix_length, publish_onsets_message, (unsigned)params.len) + 1;
+         cell_send_command(publish_message_buffer, cmd_len);
+         break;
+      }
    }
    cell_pending_cmd_len = params.len;
    set_command_timeout(1000 / CELL_TIMER_MS_PER_TICK);
@@ -582,13 +602,13 @@ static void cell_start_nonblocking_publish(cell_pub_type_t pub_type)
 #ifdef USE_MQTT_SN
 
    // Build up the publish command
-   static const char* const mqttsn_prefixes[3] = { CELL_MQTTSN_PUBLISH_INFO_MSG, CELL_MQTTSN_PUBLISH_ALERT_MSG, CELL_MQTTSN_PUBLISH_AUDIO_MSG };
-   static const uint32_t mqttsn_prefix_sizes[3] = { sizeof(CELL_MQTTSN_PUBLISH_INFO_MSG), sizeof(CELL_MQTTSN_PUBLISH_ALERT_MSG), sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG) };
+   static const char* const mqttsn_prefixes[4] = { CELL_MQTTSN_PUBLISH_INFO_MSG, CELL_MQTTSN_PUBLISH_ALERT_MSG, CELL_MQTTSN_PUBLISH_AUDIO_MSG, CELL_MQTTSN_PUBLISH_ONSETS_MSG };
+   static const uint32_t mqttsn_prefix_sizes[4] = { sizeof(CELL_MQTTSN_PUBLISH_INFO_MSG), sizeof(CELL_MQTTSN_PUBLISH_ALERT_MSG), sizeof(CELL_MQTTSN_PUBLISH_AUDIO_MSG), sizeof(CELL_MQTTSN_PUBLISH_ONSETS_MSG) };
    const char *prefix = mqttsn_prefixes[pub_type];
    const uint32_t prefix_size = mqttsn_prefix_sizes[pub_type];
    arm_copy_q7((q7_t*)prefix, (q7_t*)publish_message_buffer, prefix_size);
    publish_message_buffer[MQTTSN_PUBLISH_MSG_QOS_OFFSET] = params.qos;
-   const uint32_t encoded = (pub_type == CELL_PUB_AUDIO) ?
+   const uint32_t encoded = ((pub_type == CELL_PUB_AUDIO) || (pub_type == CELL_PUB_ONSET_HISTORY)) ?
       base64_encode_binary_data(publish_message_buffer + prefix_size - 1, params.data, params.len) :
       hex_encode_binary_data(publish_message_buffer + prefix_size - 1, params.data, params.len);
    arm_copy_q7((q7_t*)"\"\r", (q7_t*)publish_message_buffer + prefix_size - 1 + encoded, 2);
@@ -597,9 +617,10 @@ static void cell_start_nonblocking_publish(cell_pub_type_t pub_type)
 #else
 
    // Build up the publish command
-   static const char * const broker_topics[3] = { broker_topic_info, broker_topic_alert, broker_topic_audio };
-   const uint32_t pfx = (uint32_t)snprintf(publish_message_buffer, sizeof(publish_message_buffer), "AT+UMQTTC=2,%c,0,\"%s\",\"", params.qos, broker_topics[pub_type]);
-   const uint32_t encoded = (pub_type == CELL_PUB_AUDIO) ?
+   static const char * const broker_topics[4] = { broker_topic_info, broker_topic_alert, broker_topic_audio, broker_topic_onsets };
+   const uint8_t hex_mode = ((pub_type == CELL_PUB_AUDIO) || (pub_type == CELL_PUB_ONSET_HISTORY)) ? 0 : 1;
+   const uint32_t pfx = (uint32_t)snprintf(publish_message_buffer, sizeof(publish_message_buffer), "AT+UMQTTC=2,%c,0,%u,\"%s\",\"", params.qos, hex_mode, broker_topics[pub_type]);
+   const uint32_t encoded = ((pub_type == CELL_PUB_AUDIO) || (pub_type == CELL_PUB_ONSET_HISTORY)) ?
       base64_encode_binary_data(publish_message_buffer + pfx, params.data, params.len) :
       hex_encode_binary_data(publish_message_buffer + pfx, params.data, params.len);
    arm_copy_q7((q7_t*)"\"\r", (q7_t*)publish_message_buffer + pfx + encoded, 2);
@@ -702,10 +723,12 @@ static uint8_t cell_configure_modem(void)
       snprintf(broker_topic_info, sizeof(broker_topic_info), CELL_MQTT_TOPIC_NAMESPACE "/%.*s/" CELL_MQTT_DEVICES_TOPIC, CELL_IMEI_LENGTH, (const char*)data.packets[0].imei);
       snprintf(broker_topic_alert, sizeof(broker_topic_alert), CELL_MQTT_TOPIC_NAMESPACE "/%.*s/" CELL_MQTT_ALERT_TOPIC, CELL_IMEI_LENGTH, (const char*)data.packets[0].imei);
       snprintf(broker_topic_audio, sizeof(broker_topic_audio), CELL_MQTT_TOPIC_NAMESPACE "/%.*s/" CELL_MQTT_EVIDENCE_TOPIC, CELL_IMEI_LENGTH, (const char*)data.packets[0].imei);
+      snprintf(broker_topic_onsets, sizeof(broker_topic_onsets), CELL_MQTT_TOPIC_NAMESPACE "/%.*s/" CELL_MQTT_ONSETS_TOPIC, CELL_IMEI_LENGTH, (const char*)data.packets[0].imei);
 #ifdef CELL_MQTT_USE_BINARY_PUBLISH
       info_message_length = (uint32_t)snprintf(publish_info_message, sizeof(publish_info_message), "AT+UMQTTC=9,%c,0,\"%s\",%u\r", (device_info.device_config.mqtt_device_info_qos > 0) ? '1' : '0', broker_topic_info, (unsigned)sizeof(device_info_t)) + 1;
       alert_prefix_length = (uint32_t)snprintf(publish_alert_message, sizeof(publish_alert_message), "AT+UMQTTC=9,%c,0,\"%s\",", (device_info.device_config.mqtt_alert_qos > 0) ? '1' : '0', broker_topic_alert);
       audio_prefix_length = (uint32_t)snprintf(publish_audio_message, sizeof(publish_audio_message), "AT+UMQTTC=9,%c,0,\"%s\",", (device_info.device_config.mqtt_audio_qos > 0) ? '1' : '0', broker_topic_audio);
+      onsets_prefix_length = (uint32_t)snprintf(publish_onsets_message, sizeof(publish_onsets_message), "AT+UMQTTC=9,0,0,\"%s\",", broker_topic_onsets);
 #endif
 
       // Verify that the MQTT configuration is correctly set up
@@ -1171,7 +1194,11 @@ static void cell_process_network_message(volatile char* message, uint32_t messag
                   remaining -= 5;
                   while (remaining && ((*ts_search == ' ') || (*ts_search == '\t'))) { ++ts_search; --remaining; }
                   if (remaining)
+                  {
                      shot_detector_find_historical_onsets(atof((const char*)ts_search), &historical_onset_message);
+                     if (historical_onset_message.num_onsets)
+                        onset_history_pending = 1;
+                  }
                   break;
                }
                ++ts_search;
@@ -1327,6 +1354,8 @@ void cell_init(void)
    memcpy(publish_alert_message, CELL_MQTTSN_PUB_BINARY_ALERT_MSG, alert_prefix_length + 1);
    audio_prefix_length = sizeof(CELL_MQTTSN_PUB_BINARY_AUDIO_MSG) - 1;
    memcpy(publish_audio_message, CELL_MQTTSN_PUB_BINARY_AUDIO_MSG, audio_prefix_length + 1);
+   onsets_prefix_length = sizeof(CELL_MQTTSN_PUB_BINARY_ONSETS_MSG) - 1;
+   memcpy(publish_onsets_message, CELL_MQTTSN_PUB_BINARY_ONSETS_MSG, onsets_prefix_length + 1);
 #endif
 
    // Initialize the DMA2 clock
@@ -1718,7 +1747,14 @@ void cell_update_state(void)
       return;
    }
 
-   // Priority 4: drain the outgoing audio ring buffer
+   // Priority 4: publish a pending historical onset response
+   if (onset_history_pending)
+   {
+      cell_start_nonblocking_publish(CELL_PUB_ONSET_HISTORY);
+      return;
+   }
+
+   // Priority 5: drain the outgoing audio ring buffer
    if (cell_audio_tx_count)
    {
       cell_start_nonblocking_publish(CELL_PUB_AUDIO);
@@ -1730,7 +1766,7 @@ uint8_t cell_pending_events(void)
 {
    // Return whether there are any pending events to be handled
    return configure_modem || connectivity_changed || device_info_update || pending_messages ||
-          cell_alert_tx_count || cell_audio_tx_count || (cell_step != CELL_STEP_IDLE);
+          cell_alert_tx_count || onset_history_pending || cell_audio_tx_count || (cell_step != CELL_STEP_IDLE);
 }
 
 void cell_update_device_details(void)
