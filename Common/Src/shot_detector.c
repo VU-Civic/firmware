@@ -8,6 +8,7 @@
 
 // Shot Detection Type Definitions and Static Variables ----------------------------------------------------------------
 
+
 #define SHOT_DETECTOR_RING_EXTRA_SLOTS       4
 #define SHOT_DETECTOR_RING_SIZE              (AUDIO_NUM_DMAS_PER_CLIP + SHOT_DETECTOR_RING_EXTRA_SLOTS)
 
@@ -19,8 +20,10 @@ typedef struct
    uint8_t detection_handled;
 } detection_info_t;
 
+static volatile historical_onset_t old_onsets[HISTORICAL_ONSETS_MAX_SIZE];
 static volatile detection_info_t detection_info[SHOT_DETECTOR_RING_SIZE];
-static volatile uint32_t detection_ring_head, detection_ring_count, detection_pending_count;
+static volatile uint32_t detection_ring_head, detection_ring_count;
+static volatile uint32_t detection_pending_count, next_onset_index;
 static alert_message_t alert_message;
 
 
@@ -62,8 +65,9 @@ static uint32_t detection_oldest_pending_offset(void)
 void shot_detector_init(void)
 {
    // Initialize the detection info structure
+   memset((void*)old_onsets, 0, sizeof(old_onsets));
    memset((void*)detection_info, 0, sizeof(detection_info));
-   detection_ring_head = detection_ring_count = detection_pending_count = 0;
+   detection_ring_head = detection_ring_count = detection_pending_count = next_onset_index = 0;
    alert_message.device_id = device_info.device_id;
 }
 
@@ -98,6 +102,17 @@ void shot_detector_add_onset(volatile data_packet_t* volatile packet)
       latest_detection->onset_aoa[1] = packet->angle_of_arrival[1];
       latest_detection->onset_aoa[2] = packet->angle_of_arrival[2];
       latest_detection->onset_info_received = 1;
+   }
+
+   // If an onset was detected, add it to the historical onset list
+   if (packet->onset_detected)
+   {
+      old_onsets[next_onset_index].onset_timestamp = packet->onset_timestamp;
+      old_onsets[next_onset_index].onset_magnitude = packet->onset_magnitude;
+      old_onsets[next_onset_index].onset_aoa[0] = packet->angle_of_arrival[0];
+      old_onsets[next_onset_index].onset_aoa[1] = packet->angle_of_arrival[1];
+      old_onsets[next_onset_index].onset_aoa[2] = packet->angle_of_arrival[2];
+      next_onset_index = (next_onset_index + 1) % HISTORICAL_ONSETS_MAX_SIZE;
    }
 }
 
@@ -196,6 +211,19 @@ uint8_t shot_detector_process_detections(uint8_t audio_clip_id)
       }
    }
    return incident_occurring && transmit_audio;
+}
+
+void shot_detector_find_historical_onsets(double starting_timestamp, historical_onset_message_t *onsets_packet)
+{
+   onsets_packet->num_onsets = 0;
+   const int32_t search_start = (next_onset_index == 0) ? (HISTORICAL_ONSETS_MAX_SIZE - 1) : (int32_t)(next_onset_index - 1);
+   for (int32_t onset_idx = search_start; (onset_idx >= 0) && (old_onsets[onset_idx].onset_timestamp >= starting_timestamp) && (onsets_packet->num_onsets < HISTORICAL_ONSETS_MAX_RESULTS); --onset_idx)
+      if (old_onsets[onset_idx].onset_timestamp <= (starting_timestamp + HISTORICAL_ONSETS_SEARCH_SECONDS))
+         onsets_packet->onsets[onsets_packet->num_onsets++] = old_onsets[onset_idx];
+   if (next_onset_index > 0)
+      for (int32_t onset_idx = HISTORICAL_ONSETS_MAX_SIZE - 1; (onset_idx >= next_onset_index) && (old_onsets[onset_idx].onset_timestamp >= starting_timestamp) && (onsets_packet->num_onsets < HISTORICAL_ONSETS_MAX_RESULTS); --onset_idx)
+         if (old_onsets[onset_idx].onset_timestamp <= (starting_timestamp + HISTORICAL_ONSETS_SEARCH_SECONDS))
+            onsets_packet->onsets[onsets_packet->num_onsets++] = old_onsets[onset_idx];
 }
 
 #endif  // #ifdef CORE_CM4

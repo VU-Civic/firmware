@@ -49,6 +49,10 @@
 #define USB_PRODUCT_STRING                   "CivicAlert"
 #define USB_MANUFACTURER_STRING              "CivicAlert"
 
+#define HISTORICAL_ONSETS_MAX_SIZE           100
+#define HISTORICAL_ONSETS_SEARCH_SECONDS     4
+#define HISTORICAL_ONSETS_MAX_RESULTS        (HISTORICAL_ONSETS_SEARCH_SECONDS * AUDIO_NUM_DMAS_PER_CLIP)
+
 #define OPUS_FRAME_DELIMITER                 0xAA
 #define OPUS_ENCODED_BIT_RATE                15000
 #define OPUS_MS_PER_FRAME                    20
@@ -142,6 +146,12 @@ typedef struct __attribute__ ((__packed__))
    float class_outputs[AI_NUM_CLASSES];
 } ai_result_t;
 
+typedef struct __attribute__ ((__packed__))
+{
+   double onset_timestamp;
+   float onset_magnitude, onset_aoa[3];
+} historical_onset_t;
+
 typedef union
 {
    uint8_t alarms;
@@ -211,10 +221,18 @@ typedef struct __attribute__ ((__packed__))
    uint8_t data[CELL_EVIDENCE_MAX_PAYLOAD_SIZE];
 } evidence_message_t;
 
+typedef struct __attribute__ ((__packed__))
+{
+   uint64_t device_id;
+   uint32_t num_onsets;
+   historical_onset_t onsets[HISTORICAL_ONSETS_MAX_RESULTS];
+} historical_onset_message_t;
+
 typedef enum
 {
    MQTT_DEVICE_CONFIG_UPDATE = '1',
-   MQTT_DEVICE_TEST_MODE = '2'
+   MQTT_DEVICE_TEST_MODE = '2',
+   MQTT_REQUEST_ONSETS = '4'
 } mqtt_device_message_t;
 
 typedef enum
