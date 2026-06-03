@@ -812,10 +812,15 @@ static uint8_t cell_configure_modem(void)
    return sim_present;
 }
 
-static void update_device_configuration(volatile char* config_data, uint32_t data_length, uint8_t test_mode_message)
+static void handle_network_message(volatile char* config_data, uint32_t data_length, mqtt_device_message_t message_type)
 {
+   // Validate the message type
+   if ((message_type != MQTT_DEVICE_CONFIG_UPDATE) && (message_type != MQTT_DEVICE_TEST_MODE) && (message_type != MQTT_REQUEST_ONSETS))
+      return;
+
    // Parse the updated configuration values from the JSON message
    uint8_t correct_device_intent = 0;
+   double onset_timestamp = 0.0;
    config_data_t new_config = device_info.device_config;
    while (data_length && (*config_data != '{')) { ++config_data; --data_length; }
    if (data_length) { ++config_data; --data_length; }
@@ -850,8 +855,9 @@ static void update_device_configuration(volatile char* config_data, uint32_t dat
 
       // Process the key-value pair
       if ((strcmp(key, "id") == 0) && (((val[0] == '-') && (val[1] == '1')) || (strtoull(val, NULL, 10) == device_info.device_id))) correct_device_intent = 1;
-      else if (test_mode_message) { if (strcmp(key, "enabled") == 0) new_config.test_mode_start_time = (strcasecmp(val, "true") == 0) ? (uint32_t)data.packets[0].timestamp : 0; }
-      else
+      else if (message_type == MQTT_DEVICE_TEST_MODE) { if (strcmp(key, "enabled") == 0) new_config.test_mode_start_time = (strcasecmp(val, "true") == 0) ? (uint32_t)data.packets[0].timestamp : 0; }
+      else if (message_type == MQTT_REQUEST_ONSETS) { if (strcmp(key, "ts") == 0) onset_timestamp = atof(val); }
+      else if (message_type == MQTT_DEVICE_CONFIG_UPDATE)
       {
          if (strcmp(key, "info_qos") == 0) new_config.mqtt_device_info_qos = (uint8_t)atoi(val);
          else if (strcmp(key, "alert_qos") == 0) new_config.mqtt_alert_qos = (uint8_t)atoi(val);
@@ -878,8 +884,17 @@ static void update_device_configuration(volatile char* config_data, uint32_t dat
    if (!correct_device_intent)
       return;
 
-   // Update active runtime parameters if this was not a test mode message
-   if (!test_mode_message)
+   // For onset requests, find historical onsets and signal a publish
+   if (message_type == MQTT_REQUEST_ONSETS)
+   {
+      shot_detector_find_historical_onsets(onset_timestamp, &historical_onset_message);
+      if (historical_onset_message.num_onsets)
+         onset_history_pending = 1;
+      return;
+   }
+
+   // Update active runtime parameters if this was a config update message
+   if (message_type == MQTT_DEVICE_CONFIG_UPDATE)
    {
       // Update the device reporting timer if status reporting has changed
       if (new_config.device_status_transmission_interval_minutes && !device_info.device_config.device_status_transmission_interval_minutes)
@@ -1174,41 +1189,7 @@ static void cell_process_network_message(volatile char* message, uint32_t messag
    {
       volatile char *type_start = message + 7;
       while ((*(++type_start) == ':') || (*type_start == ' ') || (*type_start == '\t') || (*type_start == '"'));
-      switch ((mqtt_device_message_t)(*type_start))
-      {
-         case MQTT_DEVICE_CONFIG_UPDATE:
-            update_device_configuration(message, message_length, 0);
-            break;
-         case MQTT_DEVICE_TEST_MODE:
-            update_device_configuration(message, message_length, 1);
-            break;
-         case MQTT_REQUEST_ONSETS:
-         {
-            volatile char *ts_search = message;
-            uint32_t remaining = message_length;
-            while (remaining >= 5)
-            {
-               if (memcmp((const char*)ts_search, "\"ts\":", 5) == 0)
-               {
-                  ts_search += 5;
-                  remaining -= 5;
-                  while (remaining && ((*ts_search == ' ') || (*ts_search == '\t'))) { ++ts_search; --remaining; }
-                  if (remaining)
-                  {
-                     shot_detector_find_historical_onsets(atof((const char*)ts_search), &historical_onset_message);
-                     if (historical_onset_message.num_onsets)
-                        onset_history_pending = 1;
-                  }
-                  break;
-               }
-               ++ts_search;
-               --remaining;
-            }
-            break;
-         }
-         default:
-            break;
-      }
+      handle_network_message(message, message_length, (mqtt_device_message_t)(*type_start));
    }
 }
 
