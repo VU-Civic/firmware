@@ -4,6 +4,7 @@
 
 #include <arm_math.h>
 #include "cellular.h"
+#include "shot_detector.h"
 #include "system.h"
 
 
@@ -230,6 +231,7 @@ static uint32_t info_message_length, alert_prefix_length, audio_prefix_length, c
 #endif
 
 static evidence_message_t evidence_message;
+static historical_onset_message_t historical_onset_message;
 static alert_message_t cell_alert_tx_ring[CELL_ALERT_TX_RING_SIZE];
 static cell_audio_tx_item_t cell_audio_tx_ring[CELL_AUDIO_TX_RING_SIZE];
 static char publish_message_buffer[CELL_MAX_AT_COMMAND_SIZE];
@@ -752,7 +754,7 @@ static uint8_t cell_configure_modem(void)
 #endif  // #ifndef USE_MQTT_SN
 
       // Manually poll to ensure that connectivity status flags are properly initialized at boot
-      *(uint64_t*)evidence_message.device_id = strtoull((char*)data.packets[0].imei, NULL, 10);
+      *(uint64_t*)evidence_message.device_id = historical_onset_message.device_id = strtoull((char*)data.packets[0].imei, NULL, 10);
       for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_POLL_CGREG_MSG, sizeof(CELL_POLL_CGREG_MSG), 500); ++retries);
       for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_POLL_CEREG_MSG, sizeof(CELL_POLL_CEREG_MSG), 500); ++retries);
       for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_POLL_PDP_ACTIVE_MSG, sizeof(CELL_POLL_PDP_ACTIVE_MSG), 1000); ++retries);
@@ -1157,6 +1159,26 @@ static void cell_process_network_message(volatile char* message, uint32_t messag
          case MQTT_DEVICE_TEST_MODE:
             update_device_configuration(message, message_length, 1);
             break;
+         case MQTT_REQUEST_ONSETS:
+         {
+            volatile char *ts_search = message;
+            uint32_t remaining = message_length;
+            while (remaining >= 5)
+            {
+               if (memcmp((const char*)ts_search, "\"ts\":", 5) == 0)
+               {
+                  ts_search += 5;
+                  remaining -= 5;
+                  while (remaining && ((*ts_search == ' ') || (*ts_search == '\t'))) { ++ts_search; --remaining; }
+                  if (remaining)
+                     shot_detector_find_historical_onsets(atof((const char*)ts_search), &historical_onset_message);
+                  break;
+               }
+               ++ts_search;
+               --remaining;
+            }
+            break;
+         }
          default:
             break;
       }
@@ -1296,6 +1318,7 @@ void cell_init(void)
 {
    // Initialize the various MQTT publish messages
    memset(&evidence_message, 0, sizeof(evidence_message));
+   memset(&historical_onset_message, 0, sizeof(historical_onset_message));
 #if defined(CELL_MQTT_USE_BINARY_PUBLISH) && defined(USE_MQTT_SN)
    info_message_length = sizeof(CELL_MQTTSN_PUB_BINARY_INFO_MSG);
    memcpy(publish_info_message, CELL_MQTTSN_PUB_BINARY_INFO_MSG, sizeof(CELL_MQTTSN_PUB_BINARY_INFO_MSG));
