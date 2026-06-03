@@ -549,6 +549,7 @@ static void cell_start_nonblocking_publish(cell_pub_type_t pub_type)
    // Transmit the command header and wait for the binary data prompt
    prompt_received = 0;
    mqtt_operation_awaiting_ack = MQTT_PUBLISH_BINARY;
+   in_holdoff_period = 0;
    switch (pub_type)
    {
       case CELL_PUB_DEVICE_INFO:
@@ -607,6 +608,7 @@ static void cell_start_nonblocking_publish(cell_pub_type_t pub_type)
    // Transmit the full publish command
    if (mqtt_connected && message_len)
    {
+      in_holdoff_period = 0;
       cell_send_command(publish_message_buffer, message_len);
       set_command_timeout(1000 / CELL_TIMER_MS_PER_TICK);
       cell_step = CELL_STEP_WAIT_PUB_CMD_ACK;
