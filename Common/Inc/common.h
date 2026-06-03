@@ -86,12 +86,12 @@
   #define MAX(a, b)                          (((a) > (b)) ? (a) : (b))
 #endif
 
-#define DEFAULT_CONFIG_INITIALIZATION_TAG                         99
+#define DEFAULT_CONFIG_INITIALIZATION_TAG                         73
 #define DEFAULT_DEVICE_STATUS_UPDATE_INTERVAL_MINUTES             15
 #define DEFAULT_SD_STORAGE_AUDIO_CLIP_MIN_SECONDS                 3
-#define DEFAULT_SD_STORAGE_PROBABILITY_THRESHOLD                  -0.5f
-#define DEFAULT_MIN_SHOT_ALERT_PROBABILITY                        -0.5f
-#define DEFAULT_GOOD_SHOT_ALERT_PROBABILITY                       0.0f
+#define DEFAULT_SD_STORAGE_PROBABILITY_THRESHOLD                  0.1f
+#define DEFAULT_MIN_SHOT_ALERT_PROBABILITY                        0.01f
+#define DEFAULT_GOOD_SHOT_ALERT_PROBABILITY                       0.5f
 #define DEFAULT_MQTT_DEVICE_INFO_QOS                              0
 #define DEFAULT_MQTT_ALERT_QOS                                    0
 #define DEFAULT_MQTT_AUDIO_CLIP_QOS                               0
