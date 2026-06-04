@@ -679,11 +679,12 @@ uint8_t audio_process_new_data(uint8_t transmit_audio)
       // Transmit historical data if new evidence transmission was requested
       if (audio_transmission == CELL_AUDIO_TRANSMIT_BEGIN)
       {
-         const opus_frame_t *history_start = opusenc_get_history(), *frame = opusenc_get_history();
-         do {
+         const opus_frame_t *frame = opusenc_get_history();
+         while (frame != result_begin)
+         {
             clip_id = cell_transmit_audio(frame, 0);
             frame = frame->next;
-         } while (frame != history_start);
+         }
       }
 
       // Optionally transmit the newly encoded data over the cellular network
