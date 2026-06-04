@@ -815,12 +815,12 @@ static uint8_t cell_configure_modem(void)
 static void handle_network_message(volatile char* config_data, uint32_t data_length, mqtt_device_message_t message_type)
 {
    // Validate the message type
-   if ((message_type != MQTT_DEVICE_CONFIG_UPDATE) && (message_type != MQTT_DEVICE_TEST_MODE) && (message_type != MQTT_REQUEST_ONSETS))
+   if ((message_type != MQTT_DEVICE_CONFIG_UPDATE) && (message_type != MQTT_DEVICE_TEST_MODE) && (message_type != MQTT_REQUEST_ONSETS) && (message_type != MQTT_DEVICE_RESET))
       return;
 
    // Parse the updated configuration values from the JSON message
-   uint8_t correct_device_intent = 0;
    double onset_timestamp = 0.0;
+   uint8_t correct_device_intent = 0, reset_requested = 0;
    config_data_t new_config = device_info.device_config;
    while (data_length && (*config_data != '{')) { ++config_data; --data_length; }
    if (data_length) { ++config_data; --data_length; }
@@ -855,18 +855,32 @@ static void handle_network_message(volatile char* config_data, uint32_t data_len
 
       // Process the key-value pair
       if ((strcmp(key, "id") == 0) && (((val[0] == '-') && (val[1] == '1')) || (strtoull(val, NULL, 10) == device_info.device_id))) correct_device_intent = 1;
-      else if (message_type == MQTT_DEVICE_TEST_MODE) { if (strcmp(key, "enabled") == 0) new_config.test_mode_start_time = (strcasecmp(val, "true") == 0) ? (uint32_t)data.packets[0].timestamp : 0; }
-      else if (message_type == MQTT_REQUEST_ONSETS) { if (strcmp(key, "ts") == 0) onset_timestamp = atof(val); }
-      else if (message_type == MQTT_DEVICE_CONFIG_UPDATE)
+      else
       {
-         if (strcmp(key, "info_qos") == 0) new_config.mqtt_device_info_qos = (uint8_t)atoi(val);
-         else if (strcmp(key, "alert_qos") == 0) new_config.mqtt_alert_qos = (uint8_t)atoi(val);
-         else if (strcmp(key, "audio_qos") == 0) new_config.mqtt_audio_qos = (uint8_t)atoi(val);
-         else if (strcmp(key, "shot_min") == 0) new_config.shot_detection_min_threshold = (float)atof(val);
-         else if (strcmp(key, "shot_good") == 0) new_config.shot_detection_good_threshold = (float)atof(val);
-         else if (strcmp(key, "store_thresh") == 0) new_config.storage_classification_threshold = (float)atof(val);
-         else if (strcmp(key, "clip_sec") == 0) new_config.audio_clip_length_seconds = (uint8_t)atoi(val);
-         else if (strcmp(key, "status_min") == 0) new_config.device_status_transmission_interval_minutes = (uint8_t)atoi(val);
+         switch (message_type)
+         {
+            case MQTT_DEVICE_TEST_MODE:
+               if (strcmp(key, "enabled") == 0) new_config.test_mode_start_time = (strcasecmp(val, "true") == 0) ? (uint32_t)data.packets[0].timestamp : 0;
+               break;
+            case MQTT_REQUEST_ONSETS:
+               if (strcmp(key, "ts") == 0) onset_timestamp = atof(val);
+               break;
+            case MQTT_DEVICE_CONFIG_UPDATE:
+               if (strcmp(key, "info_qos") == 0) new_config.mqtt_device_info_qos = (uint8_t)atoi(val);
+               else if (strcmp(key, "alert_qos") == 0) new_config.mqtt_alert_qos = (uint8_t)atoi(val);
+               else if (strcmp(key, "audio_qos") == 0) new_config.mqtt_audio_qos = (uint8_t)atoi(val);
+               else if (strcmp(key, "shot_min") == 0) new_config.shot_detection_min_threshold = (float)atof(val);
+               else if (strcmp(key, "shot_good") == 0) new_config.shot_detection_good_threshold = (float)atof(val);
+               else if (strcmp(key, "store_thresh") == 0) new_config.storage_classification_threshold = (float)atof(val);
+               else if (strcmp(key, "clip_sec") == 0) new_config.audio_clip_length_seconds = (uint8_t)atoi(val);
+               else if (strcmp(key, "status_min") == 0) new_config.device_status_transmission_interval_minutes = (uint8_t)atoi(val);
+               break;
+            case MQTT_DEVICE_RESET:
+               reset_requested = 1;
+               break;
+            default:
+               break;
+         }
       }
 
       // Check if parsing is complete
@@ -883,6 +897,13 @@ static void handle_network_message(volatile char* config_data, uint32_t data_len
    // Do not update if this message was intended for a different device
    if (!correct_device_intent)
       return;
+
+   // Simply reset the device if requested
+   if (reset_requested)
+   {
+      chip_reset();
+      return;
+   }
 
    // For onset requests, find historical onsets and signal a publish
    if (message_type == MQTT_REQUEST_ONSETS)
