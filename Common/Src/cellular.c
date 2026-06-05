@@ -59,6 +59,7 @@
 #define CELL_SIGNAL_QUALITY_EXT_MSG       "+CESQ:"
 #define CELL_MQTT_MSG                     "+UUMQTTC:"
 #define CELL_MQTT_SN_MSG                  "+UUMQTTSNC:"
+#define CELL_MQTT_SN_RESPONSE_MSG         "+UMQTTC:"
 #define CELL_MQTT_ERROR_MSG               "+UMQTTSNER:"
 
 #define CELL_SOFT_RESET_MSG               "AT+CFUN=16\r"
@@ -115,7 +116,7 @@
 #define CELL_MQTTSN_PUB_BINARY_ALERT_MSG  "AT+UMQTTSNC=12,0,0,1,\"" STRINGIZE(CELL_MQTT_ALERT_TOPIC) "\","
 #define CELL_MQTTSN_PUB_BINARY_AUDIO_MSG  "AT+UMQTTSNC=12,0,0,1,\"" STRINGIZE(CELL_MQTT_EVIDENCE_TOPIC) "\","
 #define CELL_MQTTSN_PUB_BINARY_ONSETS_MSG "AT+UMQTTSNC=12,0,0,1,\"" STRINGIZE(CELL_MQTT_ONSETS_TOPIC) "\","
-#define CELL_MQTTSN_SUBSCRIBE_MSG         "AT+UMQTTSNC=5,1,1,\"" STRINGIZE(CELL_MQTT_CONTROL_TOPIC) "\"\r"
+#define CELL_MQTTSN_SUBSCRIBE_MSG         "AT+UMQTTSNC=5,0,1,\"" STRINGIZE(CELL_MQTT_CONTROL_TOPIC) "\"\r"
 #define CELL_MQTTSN_READ_MSG              "AT+UMQTTSNC=9,1\r"
 #define CELL_GET_MQTTSN_ERROR_MSG         "AT+UMQTTSNER\r"
 
@@ -248,10 +249,11 @@ static volatile mqtt_operation_t mqtt_operation_awaiting_ack = MQTT_DONE;
 static volatile uint8_t mqtt_result = 0, pending_messages = 0, connectivity_changed = 0, signal_power = 255;
 static volatile uint8_t cell_modem_available = 0, configure_modem = 0, mqtt_connected = 0, signal_quality = 255;
 static volatile uint8_t valid_cgreg = 0, valid_cereg = 0, valid_pdp = 0, temperature_alert = 0, reading_imsi = 0;
-static volatile uint8_t cell_busy = 0, device_info_update = 0, mqtt_configured = 0, prompt_received = 0, onset_history_pending = 0;
+static volatile uint8_t cell_busy = 0, device_info_update = 0, mqtt_configured = 0, prompt_received = 0;
 static volatile uint8_t device_update_timer_count = 0, bad_network_conn_timer_count = 0, bad_pdp_timer_count = 0;
 static volatile uint8_t command_acked = 0, command_nacked = 0, timed_out = 0, in_holdoff_period = 0;
 static volatile uint8_t mqtt_connect_pending = 0, bad_mqtt_conn_timer_count = 0, mqtt_subscribed = 0;
+static volatile uint8_t incoming_message_pending = 0, onset_history_pending = 0;
 static volatile char sim_id[SIM_CARD_ID_MAX_LENGTH+1], *incoming_message = 0;
 static volatile uint32_t incoming_message_length, baud_rate = 0, cme_error = 0;
 
@@ -385,6 +387,8 @@ static void cell_mqtt_connect(void)
    }
 }
 
+#ifdef CELL_MQTT_EXPLICIT_SUBSCRIBE
+
 static void cell_mqtt_subscribe(void)
 {
    // Do not attempt to subscribe if modem is currently busy with another task
@@ -431,6 +435,8 @@ static void cell_mqtt_subscribe(void)
    }
 #endif
 }
+
+#endif  // #ifdef CELL_MQTT_EXPLICIT_SUBSCRIBE
 
 #ifndef CELL_MQTT_USE_BINARY_PUBLISH
 
@@ -943,14 +949,10 @@ static void handle_network_message(volatile char* config_data, uint32_t data_len
    device_info_update = 1;
 }
 
-static char* handle_mqtt_message(char* msg, uint16_t max_msg_len)
+static char* handle_mqtt_message(char* msg, uint16_t max_msg_len, uint32_t prefix_size)
 {
    // Parse the broker operation code
-#ifdef USE_MQTT_SN
-   char *msg_start = find_start_of_message(msg, sizeof(CELL_MQTT_SN_MSG) - 1, &max_msg_len);
-#else
-   char *msg_start = find_start_of_message(msg, sizeof(CELL_MQTT_MSG) - 1, &max_msg_len);
-#endif
+   char *msg_start = find_start_of_message(msg, prefix_size, &max_msg_len);
    const uint32_t opcode_length = ((msg_start[1] == ',') ? 1 : 2);
    msg_start[opcode_length] = '\0';
    const mqtt_operation_t mqtt_operation = (mqtt_operation_t)atoi(msg_start);
@@ -969,19 +971,21 @@ static char* handle_mqtt_message(char* msg, uint16_t max_msg_len)
    else if (mqtt_operation == MQTT_READ)
    {
       msg = find_end_of_message(msg_start, &max_msg_len) + 1;
+      char *message_end = msg - 3, *search = message_end;
+      while ((search > msg_start) && (*search != '{'))
+         --search;
+      if (*search == '{')
+      {
+         incoming_message = search;
+         incoming_message_length = (uint32_t)(message_end - search);
+      }
       if (mqtt_operation_awaiting_ack == MQTT_READ)
       {
-         char *message_end = msg - 3, *search = message_end;
-         while ((search > msg_start) && (*search != '{'))
-            --search;
-         if (*search == '{')
-         {
-            incoming_message = search;
-            incoming_message_length = (uint32_t)(message_end - search);
-         }
          if (pending_messages)
             --pending_messages;
       }
+      else if (incoming_message)
+         incoming_message_pending = 1;
       else
          pending_messages = (uint8_t)atoi(msg_start + opcode_length + 1);
    }
@@ -1076,10 +1080,13 @@ static uint16_t cell_process_message(char* msg, uint16_t max_msg_len)
    }
 #ifdef USE_MQTT_SN
    else if ((max_msg_len >= (1 + sizeof(CELL_MQTT_SN_MSG))) && (memcmp(msg, CELL_MQTT_SN_MSG, sizeof(CELL_MQTT_SN_MSG) - 1) == 0))
+      msg = handle_mqtt_message(msg, max_msg_len, sizeof(CELL_MQTT_SN_MSG) - 1);
+   else if ((max_msg_len >= (1 + sizeof(CELL_MQTT_SN_RESPONSE_MSG))) && (memcmp(msg, CELL_MQTT_SN_RESPONSE_MSG, sizeof(CELL_MQTT_SN_RESPONSE_MSG) - 1) == 0))
+      msg = handle_mqtt_message(msg, max_msg_len, sizeof(CELL_MQTT_SN_RESPONSE_MSG) - 1);
 #else
    else if ((max_msg_len >= (1 + sizeof(CELL_MQTT_MSG))) && (memcmp(msg, CELL_MQTT_MSG, sizeof(CELL_MQTT_MSG) - 1) == 0))
+      msg = handle_mqtt_message(msg, max_msg_len, sizeof(CELL_MQTT_MSG) - 1);
 #endif
-      msg = handle_mqtt_message(msg, max_msg_len);
    else if ((max_msg_len >= (1 + sizeof(CELL_MQTT_ERROR_MSG))) && (memcmp(msg, CELL_MQTT_ERROR_MSG, sizeof(CELL_MQTT_ERROR_MSG) - 1) == 0))
    {
       char *msg_start = find_start_of_message(msg, sizeof(CELL_MQTT_ERROR_MSG) - 1, &max_msg_len);
@@ -1589,11 +1596,13 @@ void cell_update_state(void)
          }
          else if (!mqtt_connected)
             cell_mqtt_connect();
+#ifdef CELL_MQTT_EXPLICIT_SUBSCRIBE
          else if (!mqtt_subscribed)
          {
             cell_send_command_await_response(CELL_GET_SIGNAL_QUALITY_MSG, sizeof(CELL_GET_SIGNAL_QUALITY_MSG), 1000);
             cell_mqtt_subscribe();
          }
+#endif
       }
       else if (bad_network_conn_timer_count >= CELL_BAD_CONN_TIMEOUT_MINUTES)
          cell_reboot_firmware(0);
@@ -1724,7 +1733,19 @@ void cell_update_state(void)
       return;
    }
 
-   // Priority 2: poll the modem to read each buffered message from the broker
+   // Priority 2: process any message content delivered directly via a URC before the read command
+   if (incoming_message_pending)
+   {
+      incoming_message_pending = 0;
+      if (incoming_message)
+         cell_process_network_message(incoming_message, incoming_message_length);
+      incoming_message = 0;
+      if (pending_messages)
+         --pending_messages;
+      return;
+   }
+
+   // Priority 3: poll the modem to read each buffered message from the broker
    if (pending_messages)
    {
       cell_busy = 1;
