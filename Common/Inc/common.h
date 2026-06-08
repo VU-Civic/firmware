@@ -212,6 +212,7 @@ typedef struct __attribute__ ((__packed__))
    int32_t sensor_q1, sensor_q2, sensor_q3;
    float sensor_lat, sensor_lon, sensor_ht;
    uint8_t audio_clip_id, num_events, cell_signal_power, cell_signal_quality;
+   config_data_t device_config;
    event_info_t events[MAX_NUM_EVENTS_PER_ALERT];
 } alert_message_t;
 
@@ -233,7 +234,8 @@ typedef enum
    MQTT_DEVICE_CONFIG_UPDATE = '1',
    MQTT_DEVICE_TEST_MODE = '2',
    MQTT_REQUEST_ONSETS = '4',
-   MQTT_DEVICE_RESET = '8'
+   MQTT_DEVICE_RESET = '8',
+   MQTT_DEVICE_PING = '16'
 } mqtt_device_message_t;
 
 typedef enum

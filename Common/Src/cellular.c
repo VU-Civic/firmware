@@ -821,12 +821,13 @@ static uint8_t cell_configure_modem(void)
 static void handle_network_message(volatile char* config_data, uint32_t data_length, mqtt_device_message_t message_type)
 {
    // Validate the message type
-   if ((message_type != MQTT_DEVICE_CONFIG_UPDATE) && (message_type != MQTT_DEVICE_TEST_MODE) && (message_type != MQTT_REQUEST_ONSETS) && (message_type != MQTT_DEVICE_RESET))
+   if ((message_type != MQTT_DEVICE_CONFIG_UPDATE) && (message_type != MQTT_DEVICE_TEST_MODE) &&
+       (message_type != MQTT_REQUEST_ONSETS) && (message_type != MQTT_DEVICE_RESET) && (message_type != MQTT_DEVICE_PING))
       return;
 
    // Parse the updated configuration values from the JSON message
    double onset_timestamp = 0.0;
-   uint8_t correct_device_intent = 0, reset_requested = 0;
+   uint8_t correct_device_intent = 0;
    config_data_t new_config = device_info.device_config;
    while (data_length && (*config_data != '{')) { ++config_data; --data_length; }
    if (data_length) { ++config_data; --data_length; }
@@ -881,9 +882,6 @@ static void handle_network_message(volatile char* config_data, uint32_t data_len
                else if (strcmp(key, "clip_sec") == 0) new_config.audio_clip_length_seconds = (uint8_t)atoi(val);
                else if (strcmp(key, "status_min") == 0) new_config.device_status_transmission_interval_minutes = (uint8_t)atoi(val);
                break;
-            case MQTT_DEVICE_RESET:
-               reset_requested = 1;
-               break;
             default:
                break;
          }
@@ -900,53 +898,68 @@ static void handle_network_message(volatile char* config_data, uint32_t data_len
       }
    }
 
-   // Do not update if this message was intended for a different device
+   // Do not process if this message was intended for a different device
    if (!correct_device_intent)
       return;
 
-   // Simply reset the device if requested
-   if (reset_requested)
+   // Handle the message content based on its type
+   switch (message_type)
    {
-      chip_reset();
-      return;
+      case MQTT_DEVICE_TEST_MODE:
+         // Simply copy the new configuration to non-volatile storage
+         device_info.device_config = new_config;
+         chip_save_config(0);
+
+         // Signal that a device status message should be sent
+         device_update_timer_count = 0;
+         device_info_update = 1;
+         break;
+      case MQTT_REQUEST_ONSETS:
+         // Only search for onsets if a valid starting timestamp was received
+         if (onset_timestamp > 1780886174.0f)
+         {
+            shot_detector_find_historical_onsets(onset_timestamp, &historical_onset_message);
+            if (historical_onset_message.num_onsets)
+               onset_history_pending = 1;
+         }
+         break;
+      case MQTT_DEVICE_CONFIG_UPDATE:
+         // Update the device reporting timer if status reporting has changed
+         if (new_config.device_status_transmission_interval_minutes && !device_info.device_config.device_status_transmission_interval_minutes)
+            SET_BIT(LPTIM3->CR, LPTIM_CR_CNTSTRT);
+         else if (!new_config.device_status_transmission_interval_minutes && device_info.device_config.device_status_transmission_interval_minutes)
+         {
+            CLEAR_BIT(LPTIM3->CR, LPTIM_CR_ENABLE);
+            while (READ_BIT(LPTIM3->CR, LPTIM_CR_ENABLE));
+            SET_BIT(LPTIM3->CR, LPTIM_CR_ENABLE);
+            WRITE_REG(LPTIM3->ARR, CELL_TIMER_1MIN_COUNT);
+            while (READ_REG(LPTIM3->ARR) != CELL_TIMER_1MIN_COUNT);
+         }
+
+         // Update the AI configuration parameters
+         data.packets[0].ai_config.audio_clip_length_seconds = data.packets[1].ai_config.audio_clip_length_seconds = new_config.audio_clip_length_seconds;
+         data.packets[0].ai_config.storage_classification_threshold = data.packets[1].ai_config.storage_classification_threshold = new_config.storage_classification_threshold;
+
+         // Copy the new configuration to non-volatile storage
+         device_info.device_config = new_config;
+         chip_save_config(0);
+
+         // Signal that a device status message should be sent to acknowledge receipt of the configuration change
+         device_update_timer_count = 0;
+         device_info_update = 1;
+         break;
+      case MQTT_DEVICE_RESET:
+         // Simply reset the device if requested
+         chip_reset();
+         break;
+      case MQTT_DEVICE_PING:
+         // Signal that a device status message should be sent
+         device_update_timer_count = 0;
+         device_info_update = 1;
+         break;
+      default:
+         break;
    }
-
-   // For onset requests, find historical onsets and signal a publish
-   if (message_type == MQTT_REQUEST_ONSETS)
-   {
-      shot_detector_find_historical_onsets(onset_timestamp, &historical_onset_message);
-      if (historical_onset_message.num_onsets)
-         onset_history_pending = 1;
-      return;
-   }
-
-   // Update active runtime parameters if this was a config update message
-   if (message_type == MQTT_DEVICE_CONFIG_UPDATE)
-   {
-      // Update the device reporting timer if status reporting has changed
-      if (new_config.device_status_transmission_interval_minutes && !device_info.device_config.device_status_transmission_interval_minutes)
-         SET_BIT(LPTIM3->CR, LPTIM_CR_CNTSTRT);
-      else if (!new_config.device_status_transmission_interval_minutes && device_info.device_config.device_status_transmission_interval_minutes)
-      {
-         CLEAR_BIT(LPTIM3->CR, LPTIM_CR_ENABLE);
-         while (READ_BIT(LPTIM3->CR, LPTIM_CR_ENABLE));
-         SET_BIT(LPTIM3->CR, LPTIM_CR_ENABLE);
-         WRITE_REG(LPTIM3->ARR, CELL_TIMER_1MIN_COUNT);
-         while (READ_REG(LPTIM3->ARR) != CELL_TIMER_1MIN_COUNT);
-      }
-
-      // Update the AI configuration parameters
-      data.packets[0].ai_config.audio_clip_length_seconds = data.packets[1].ai_config.audio_clip_length_seconds = new_config.audio_clip_length_seconds;
-      data.packets[0].ai_config.storage_classification_threshold = data.packets[1].ai_config.storage_classification_threshold = new_config.storage_classification_threshold;
-   }
-
-   // Copy the new configuration to non-volatile storage
-   device_info.device_config = new_config;
-   chip_save_config(0);
-
-   // Signal that a device status message should be sent to acknowledge receipt of the configuration change
-   device_update_timer_count = 0;
-   device_info_update = 1;
 }
 
 static char* handle_mqtt_message(char* msg, uint16_t max_msg_len, uint32_t prefix_size)
@@ -1816,6 +1829,7 @@ void cell_transmit_alert(alert_message_t *alert)
    alert->sensor_lat = device_info.lat;
    alert->sensor_lon = device_info.lon;
    alert->sensor_ht = device_info.ht;
+   alert->device_config = device_info.device_config;
 
    // Enqueue the alert into a ring buffer
    if (cell_alert_tx_count < CELL_ALERT_TX_RING_SIZE)
