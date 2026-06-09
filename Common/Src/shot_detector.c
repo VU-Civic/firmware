@@ -144,13 +144,13 @@ uint8_t shot_detector_process_detections(uint8_t audio_clip_id)
 
       // Update the max confidence for any historical onset whose detection falls within 1 second of the current packet
       const float current_classification = latest_detection->gunshot_classification;
-      for (uint32_t back = 1; back <= AUDIO_NUM_DMAS_PER_CLIP; ++back)
+      for (uint32_t back = 1; back < AUDIO_NUM_DMAS_PER_CLIP; ++back)
       {
-         const uint32_t update_idx = (next_onset_index + HISTORICAL_ONSETS_MAX_SIZE - back) % HISTORICAL_ONSETS_MAX_SIZE;
-         if ((old_onsets[update_idx].onset_timestamp == 0.0) || ((latest_detection->packet_timestamp - old_onsets[update_idx].onset_timestamp) > 1.0))
+         const uint32_t test_idx = (next_onset_index + HISTORICAL_ONSETS_MAX_SIZE - back) % HISTORICAL_ONSETS_MAX_SIZE;
+         if ((latest_detection->packet_timestamp - old_onsets[test_idx].onset_timestamp) >= 1.0)
             break;
-         if (old_onsets[update_idx].max_confidence < current_classification)
-            old_onsets[update_idx].max_confidence = current_classification;
+         if (old_onsets[test_idx].max_confidence < current_classification)
+            old_onsets[test_idx].max_confidence = current_classification;
       }
 
       // If an onset was detected, add it to the historical onset list
@@ -165,12 +165,9 @@ uint8_t shot_detector_process_detections(uint8_t audio_clip_id)
          next_onset_index = (next_onset_index + 1) % HISTORICAL_ONSETS_MAX_SIZE;
       }
 
-      // Window for this target packet: logically oldest -> newest, ending at target
-      const uint32_t window_start = ((target_offset + 1) > AUDIO_NUM_DMAS_PER_CLIP) ? (target_offset + 1 - AUDIO_NUM_DMAS_PER_CLIP) : 0U;
-
       // Determine whether a shot was detected in the most recent audio clip
       uint8_t gunshot_detected = 0;
-      for (uint32_t i = window_start; i <= target_offset; ++i)
+      for (uint32_t i = 0; i <= target_offset; ++i)
          gunshot_detected |= detection_info[detection_ring_index_from_head(ring_head_snapshot, i)].onset_detected;
       if (!device_info.device_config.test_mode_start_time)
          gunshot_detected &= (latest_detection->gunshot_classification >= device_info.device_config.shot_detection_min_threshold);
@@ -200,7 +197,7 @@ uint8_t shot_detector_process_detections(uint8_t audio_clip_id)
          alert_message.num_events = 0;
          max_classification = latest_detection->gunshot_classification;
          transmit_audio = (max_classification >= device_info.device_config.shot_detection_good_threshold);
-         for (uint32_t i = window_start; i <= target_offset; ++i)
+         for (uint32_t i = 0; i <= target_offset; ++i)
          {
             volatile detection_info_t* const detection = &detection_info[detection_ring_index_from_head(ring_head_snapshot, i)];
             if (detection->onset_detected)
@@ -213,13 +210,13 @@ uint8_t shot_detector_process_detections(uint8_t audio_clip_id)
       latest_detection->detection_handled = 1;
       --detection_pending_count;
 
-      // Drop handled entries that are older than any remaining pending packet
-      while (detection_ring_count > detection_pending_count)
+      // Drop handled entries that are older than the required detection history
+      while ((detection_ring_count - detection_pending_count) >= AUDIO_NUM_DMAS_PER_CLIP)
       {
          volatile detection_info_t* const oldest = &detection_info[detection_ring_head];
          if (!oldest->detection_handled)
             break;
-         detection_ring_head = (detection_ring_head + 1U) % SHOT_DETECTOR_RING_SIZE;
+         detection_ring_head = (detection_ring_head + 1) % SHOT_DETECTOR_RING_SIZE;
          --detection_ring_count;
       }
    }
