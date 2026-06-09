@@ -21,6 +21,7 @@ typedef struct
 } detection_info_t;
 
 static volatile historical_onset_t old_onsets[HISTORICAL_ONSETS_MAX_SIZE];
+static volatile uint8_t old_onsets_sent[HISTORICAL_ONSETS_MAX_SIZE];
 static volatile detection_info_t detection_info[SHOT_DETECTOR_RING_SIZE];
 static volatile uint32_t detection_ring_head, detection_ring_count;
 static volatile uint32_t detection_pending_count, next_onset_index;
@@ -37,6 +38,20 @@ static void fill_detection_event(event_info_t *event_info, volatile detection_in
    event_info->angle_of_arrival[0] = detection_info->onset_aoa[0];
    event_info->angle_of_arrival[1] = detection_info->onset_aoa[1];
    event_info->angle_of_arrival[2] = detection_info->onset_aoa[2];
+}
+
+static void mark_onset_sent(double onset_timestamp)
+{
+   // Mark any historical onset with the given timestamp as sent
+   for (uint32_t i = 1; i <= HISTORICAL_ONSETS_MAX_SIZE; ++i)
+   {
+      const uint32_t idx = (next_onset_index + HISTORICAL_ONSETS_MAX_SIZE - i) % HISTORICAL_ONSETS_MAX_SIZE;
+      if (old_onsets[idx].onset_timestamp == onset_timestamp)
+      {
+         old_onsets_sent[idx] = 1;
+         break;
+      }
+   }
 }
 
 static uint32_t detection_ring_index(uint32_t logical_index)
@@ -66,6 +81,7 @@ void shot_detector_init(void)
 {
    // Initialize the detection info structure
    memset((void*)old_onsets, 0, sizeof(old_onsets));
+   memset((void*)old_onsets_sent, 0, sizeof(old_onsets_sent));
    memset((void*)detection_info, 0, sizeof(detection_info));
    detection_ring_head = detection_ring_count = detection_pending_count = next_onset_index = 0;
    alert_message.device_id = device_info.device_id;
@@ -156,6 +172,7 @@ uint8_t shot_detector_process_detections(uint8_t audio_clip_id)
       // If an onset was detected, add it to the historical onset list
       if (latest_detection->onset_detected)
       {
+         old_onsets_sent[next_onset_index] = 0;
          old_onsets[next_onset_index].max_confidence = current_classification;
          old_onsets[next_onset_index].onset_timestamp = latest_detection->onset_timestamp;
          old_onsets[next_onset_index].onset_magnitude = latest_detection->onset_magnitude;
@@ -186,7 +203,11 @@ uint8_t shot_detector_process_detections(uint8_t audio_clip_id)
             alert_message.audio_clip_id = audio_clip_id;
             incident_occurring = (max_classification >= device_info.device_config.shot_detection_min_threshold) ? alert_message.num_events : 0;
             if (incident_occurring || device_info.device_config.test_mode_start_time)
+            {
+               for (uint8_t i = 0; i < alert_message.num_events; ++i)
+                  mark_onset_sent(alert_message.events[i].timestamp);
                cell_transmit_alert(&alert_message);
+            }
             alert_message.num_events = incident_packets_received = 0;
             max_classification = 0.0f;
          }
@@ -228,12 +249,18 @@ void shot_detector_find_historical_onsets(double starting_timestamp, historical_
    onsets_packet->num_onsets = 0;
    const int32_t search_start = (next_onset_index == 0) ? (HISTORICAL_ONSETS_MAX_SIZE - 1) : (int32_t)(next_onset_index - 1);
    for (int32_t onset_idx = search_start; (onset_idx >= 0) && (old_onsets[onset_idx].onset_timestamp >= starting_timestamp) && (onsets_packet->num_onsets < HISTORICAL_ONSETS_MAX_RESULTS); --onset_idx)
-      if (old_onsets[onset_idx].onset_timestamp <= (starting_timestamp + HISTORICAL_ONSETS_SEARCH_SECONDS))
+      if (!old_onsets_sent[onset_idx] && (old_onsets[onset_idx].onset_timestamp <= (starting_timestamp + HISTORICAL_ONSETS_SEARCH_SECONDS)))
+      {
          onsets_packet->onsets[onsets_packet->num_onsets++] = old_onsets[onset_idx];
+         old_onsets_sent[onset_idx] = 1;
+      }
    if (next_onset_index > 0)
       for (int32_t onset_idx = HISTORICAL_ONSETS_MAX_SIZE - 1; (onset_idx >= next_onset_index) && (old_onsets[onset_idx].onset_timestamp >= starting_timestamp) && (onsets_packet->num_onsets < HISTORICAL_ONSETS_MAX_RESULTS); --onset_idx)
-         if (old_onsets[onset_idx].onset_timestamp <= (starting_timestamp + HISTORICAL_ONSETS_SEARCH_SECONDS))
+         if (!old_onsets_sent[onset_idx] && (old_onsets[onset_idx].onset_timestamp <= (starting_timestamp + HISTORICAL_ONSETS_SEARCH_SECONDS)))
+         {
             onsets_packet->onsets[onsets_packet->num_onsets++] = old_onsets[onset_idx];
+            old_onsets_sent[onset_idx] = 1;
+         }
 }
 
 #endif  // #ifdef CORE_CM4
