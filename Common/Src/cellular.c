@@ -900,9 +900,15 @@ static void handle_network_message(volatile char* config_data, uint32_t data_len
          device_info_update = 1;
          break;
       case MQTT_REQUEST_ONSETS:
-         // Only search for onsets if a valid starting timestamp was received
-         if (onset_timestamp > 1780886174.0f)
+         // Only search for onsets if a valid timestamp was received and no publish is already in flight
+         if ((onset_timestamp > 1780886174.0f) && !onset_history_pending)
          {
+            historical_onset_message.sensorLat = device_info.lat;
+            historical_onset_message.sensorLon = device_info.lon;
+            historical_onset_message.sensorHt = device_info.ht;
+            historical_onset_message.sensorQ1 = device_info.q1;
+            historical_onset_message.sensorQ2 = device_info.q2;
+            historical_onset_message.sensorQ3 = device_info.q3;
             shot_detector_find_historical_onsets(onset_timestamp, &historical_onset_message);
             if (historical_onset_message.num_onsets)
                onset_history_pending = 1;
@@ -1644,6 +1650,7 @@ void cell_update_state(void)
                case CELL_PUB_DEVICE_INFO: data_ptr = (const char*)&device_info; break;
                case CELL_PUB_ALERT: data_ptr = (const char*)&cell_alert_tx_ring[cell_alert_tx_head]; break;
                case CELL_PUB_AUDIO: data_ptr = (const char*)&cell_audio_tx_ring[cell_audio_tx_head].message; break;
+               case CELL_PUB_ONSET_HISTORY: data_ptr = (const char*)&historical_onset_message; break;
             }
             command_acked = command_nacked = 0;
             cell_send_command((char*)data_ptr, data_len + 1);
