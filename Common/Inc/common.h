@@ -95,11 +95,11 @@
   #define MAX(a, b)                          (((a) > (b)) ? (a) : (b))
 #endif
 
-#define DEFAULT_CONFIG_INITIALIZATION_TAG                         64
+#define DEFAULT_CONFIG_INITIALIZATION_TAG                         61
 #define DEFAULT_DEVICE_STATUS_UPDATE_INTERVAL_MINUTES             15
 #define DEFAULT_SD_STORAGE_AUDIO_CLIP_MIN_SECONDS                 3
-#define DEFAULT_SD_STORAGE_PROBABILITY_THRESHOLD                  0.1f
-#define DEFAULT_MIN_SHOT_ALERT_PROBABILITY                        0.1f
+#define DEFAULT_SD_STORAGE_PROBABILITY_THRESHOLD                  0.5f
+#define DEFAULT_MIN_SHOT_ALERT_PROBABILITY                        0.5f
 #define DEFAULT_GOOD_SHOT_ALERT_PROBABILITY                       0.5f
 #define DEFAULT_MQTT_DEVICE_INFO_QOS                              0
 #define DEFAULT_MQTT_ALERT_QOS                                    0
@@ -232,6 +232,8 @@ typedef struct __attribute__ ((__packed__))
 {
    uint64_t device_id;
    uint32_t num_onsets;
+   int32_t sensorQ1, sensorQ2, sensorQ3;
+   float sensorLat, sensorLon, sensorHt;
    historical_onset_t onsets[HISTORICAL_ONSETS_MAX_RESULTS];
 } historical_onset_message_t;
 
