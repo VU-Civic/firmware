@@ -14,7 +14,7 @@
 
 typedef struct
 {
-   double onset_timestamp;
+   double onset_timestamp, packet_timestamp;
    float onset_magnitude, onset_aoa[3], gunshot_classification;
    uint8_t onset_detected, onset_info_received, gunshot_info_received;
    uint8_t detection_handled;
@@ -85,6 +85,7 @@ void shot_detector_new_clip(void)
    // Append a new newest slot and mark it pending
    const uint32_t new_slot = detection_ring_index(detection_ring_count);
    memset((void*)&detection_info[new_slot], 0, sizeof(detection_info[0]));
+   detection_info[new_slot].packet_timestamp = data.packets[0].timestamp;
    ++detection_ring_count;
    ++detection_pending_count;
 }
@@ -102,17 +103,6 @@ void shot_detector_add_onset(volatile data_packet_t* volatile packet)
       latest_detection->onset_aoa[1] = packet->angle_of_arrival[1];
       latest_detection->onset_aoa[2] = packet->angle_of_arrival[2];
       latest_detection->onset_info_received = 1;
-   }
-
-   // If an onset was detected, add it to the historical onset list
-   if (packet->onset_detected)
-   {
-      old_onsets[next_onset_index].onset_timestamp = packet->onset_timestamp;
-      old_onsets[next_onset_index].onset_magnitude = packet->onset_magnitude;
-      old_onsets[next_onset_index].onset_aoa[0] = packet->angle_of_arrival[0];
-      old_onsets[next_onset_index].onset_aoa[1] = packet->angle_of_arrival[1];
-      old_onsets[next_onset_index].onset_aoa[2] = packet->angle_of_arrival[2];
-      next_onset_index = (next_onset_index + 1) % HISTORICAL_ONSETS_MAX_SIZE;
    }
 }
 
@@ -151,6 +141,29 @@ uint8_t shot_detector_process_detections(uint8_t audio_clip_id)
       // Freeze queue processing locations and process the oldest pending packet first
       const uint32_t ring_head_snapshot = detection_ring_head, target_offset = detection_ring_count - detection_pending_count;
       volatile detection_info_t* const latest_detection = &detection_info[detection_ring_index_from_head(ring_head_snapshot, target_offset)];
+
+      // Update the max confidence for any historical onset whose detection falls within 1 second of the current packet
+      const float current_classification = latest_detection->gunshot_classification;
+      for (uint32_t back = 1; back <= AUDIO_NUM_DMAS_PER_CLIP; ++back)
+      {
+         const uint32_t update_idx = (next_onset_index + HISTORICAL_ONSETS_MAX_SIZE - back) % HISTORICAL_ONSETS_MAX_SIZE;
+         if ((old_onsets[update_idx].onset_timestamp == 0.0) || ((latest_detection->packet_timestamp - old_onsets[update_idx].onset_timestamp) > 1.0))
+            break;
+         if (old_onsets[update_idx].max_confidence < current_classification)
+            old_onsets[update_idx].max_confidence = current_classification;
+      }
+
+      // If an onset was detected, add it to the historical onset list
+      if (latest_detection->onset_detected)
+      {
+         old_onsets[next_onset_index].max_confidence = current_classification;
+         old_onsets[next_onset_index].onset_timestamp = latest_detection->onset_timestamp;
+         old_onsets[next_onset_index].onset_magnitude = latest_detection->onset_magnitude;
+         old_onsets[next_onset_index].onset_aoa[0] = latest_detection->onset_aoa[0];
+         old_onsets[next_onset_index].onset_aoa[1] = latest_detection->onset_aoa[1];
+         old_onsets[next_onset_index].onset_aoa[2] = latest_detection->onset_aoa[2];
+         next_onset_index = (next_onset_index + 1) % HISTORICAL_ONSETS_MAX_SIZE;
+      }
 
       // Window for this target packet: logically oldest -> newest, ending at target
       const uint32_t window_start = ((target_offset + 1) > AUDIO_NUM_DMAS_PER_CLIP) ? (target_offset + 1 - AUDIO_NUM_DMAS_PER_CLIP) : 0U;

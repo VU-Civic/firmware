@@ -567,7 +567,6 @@ void MDMA_IRQHandler(void)
       WRITE_REG(MDMA_Channel2->CIFCR, (MDMA_FLAG_TE | MDMA_FLAG_BT));
       current_data_packet = &data.packets[data.audio_read_index];
       new_audio_packet = &data.packets[data.audio_read_index];
-      shot_detector_new_clip();
 
       // Update packet metadata upon full clip completion
       if (data.audio_clip_complete)
@@ -580,6 +579,7 @@ void MDMA_IRQHandler(void)
       }
       else
          gps_update_packet_timestamp(1);
+      shot_detector_new_clip();
 
       // Transmit new audio data for external processing
       ai_send((uint8_t*)new_audio_packet, sizeof(data.packets[0]));

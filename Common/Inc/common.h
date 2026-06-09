@@ -51,7 +51,7 @@
 
 #define HISTORICAL_ONSETS_SEARCH_SECONDS     4
 #define HISTORICAL_ONSETS_MAX_SIZE           100
-#define HISTORICAL_ONSETS_MAX_RESULTS        23  // Constrained by the size of an MQTT packet, otherwise (HISTORICAL_ONSETS_SEARCH_SECONDS * AUDIO_NUM_DMAS_PER_CLIP)
+#define HISTORICAL_ONSETS_MAX_RESULTS        24  // Constrained by the size of an MQTT packet, otherwise (HISTORICAL_ONSETS_SEARCH_SECONDS * AUDIO_NUM_DMAS_PER_CLIP)
 
 #define OPUS_FRAME_DELIMITER                 0xAA
 #define OPUS_ENCODED_BIT_RATE                15000
@@ -150,6 +150,7 @@ typedef struct __attribute__ ((__packed__))
 {
    double onset_timestamp;
    float onset_magnitude, onset_aoa[3];
+   float max_confidence;
 } historical_onset_t;
 
 typedef union
