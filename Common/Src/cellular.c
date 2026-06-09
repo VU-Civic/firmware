@@ -455,45 +455,35 @@ static uint32_t hex_encode_binary_data(char *output, const uint8_t *input, uint3
    return input_num_bytes * 2;
 }
 
-static uint32_t base64_encode_binary_data(char* output, const uint8_t* input, uint32_t inputNumBytes)
+static uint32_t base85_encode_binary_data(char* output, const uint8_t* input, uint32_t input_num_bytes)
 {
-  // The standard Base64 alphabet table
-  static const char encodingTable[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+   // The Base85 alphabet table
+   static const char encoding_table[] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#";
 
-  // Iterate through all input characters in groups of 3 bytes
-  uint32_t inIdx = 0, outIdx = 0;
-  const uint32_t threeBytePackets = inputNumBytes / 3;
-  for (uint32_t i = 0; i < threeBytePackets; ++i, inIdx += 3, outIdx += 4)
-  {
-    const uint32_t a = input[inIdx], b = input[inIdx + 1], c = input[inIdx + 2];
-    const uint32_t triple = (a << 16) + (b << 8) + c;
-    output[outIdx] = encodingTable[(triple >> 18) & 0x3F];
-    output[outIdx + 1] = encodingTable[(triple >> 12) & 0x3F];
-    output[outIdx + 2] = encodingTable[(triple >> 6) & 0x3F];
-    output[outIdx + 3] = encodingTable[triple & 0x3F];
-  }
+   // Iterate through all input characters in groups of 4 bytes
+   uint32_t num_bytes = 0;
+   const int full = input_num_bytes & ~(int)3;
+   for (int i = 0; i < full; i += 4)
+   {
+      char t[5];
+      uint32_t v = ((uint32_t)input[i] << 24) | ((uint32_t)input[i+1] << 16) | ((uint32_t)input[i+2] << 8) | (uint32_t)input[i+3];
+      for (int k = 4; k >= 0; --k) { t[k] = encoding_table[v % 85]; v /= 85; }
+      memcpy(output + num_bytes, t, 5);
+      num_bytes += 5;
+   }
 
-  // Pad and encode any remaining bytes
-  const uint32_t remaining = inputNumBytes - inIdx;
-  if (remaining == 1)
-  {
-    const uint32_t triple = (uint32_t)input[inIdx] << 16;
-    output[outIdx] = encodingTable[(triple >> 18) & 0x3F];
-    output[outIdx + 1] = encodingTable[(triple >> 12) & 0x3F];
-    output[outIdx + 2] = '=';
-    output[outIdx + 3] = '=';
-    outIdx += 4;
-  }
-  else if (remaining == 2)
-  {
-    const uint32_t triple = ((uint32_t)input[inIdx] << 16) | ((uint32_t)input[inIdx + 1] << 8);
-    output[outIdx] = encodingTable[(triple >> 18) & 0x3F];
-    output[outIdx + 1] = encodingTable[(triple >> 12) & 0x3F];
-    output[outIdx + 2] = encodingTable[(triple >> 6) & 0x3F];
-    output[outIdx + 3] = '=';
-    outIdx += 4;
-  }
-  return outIdx;
+   // Pad and encode any remaining bytes
+   const int rem = input_num_bytes - full;
+   if (rem)
+   {
+      char t[5];
+      uint32_t v = 0;
+      for (int k = 0; k < rem; k++) v |= (uint32_t)input[full + k] << (24 - (8*k));
+      for (int k = 4; k >= 0; --k) { t[k] = encoding_table[v % 85]; v /= 85; }
+      for (int k = 0; k < rem + 1; k++) output[num_bytes++] = t[k];
+   }
+   output[num_bytes] = '\0';
+   return num_bytes;
 }
 
 #endif  // #ifndef CELL_MQTT_USE_BINARY_PUBLISH
@@ -615,7 +605,7 @@ static void cell_start_nonblocking_publish(cell_pub_type_t pub_type)
    arm_copy_q7((q7_t*)prefix, (q7_t*)publish_message_buffer, prefix_size);
    publish_message_buffer[MQTTSN_PUBLISH_MSG_QOS_OFFSET] = params.qos;
    const uint32_t encoded = ((pub_type == CELL_PUB_AUDIO) || (pub_type == CELL_PUB_ONSET_HISTORY)) ?
-      base64_encode_binary_data(publish_message_buffer + prefix_size - 1, params.data, params.len) :
+      base85_encode_binary_data(publish_message_buffer + prefix_size - 1, params.data, params.len) :
       hex_encode_binary_data(publish_message_buffer + prefix_size - 1, params.data, params.len);
    arm_copy_q7((q7_t*)"\"\r", (q7_t*)publish_message_buffer + prefix_size - 1 + encoded, 2);
    message_len = 2 + prefix_size + encoded;
@@ -627,7 +617,7 @@ static void cell_start_nonblocking_publish(cell_pub_type_t pub_type)
    const uint8_t hex_mode = ((pub_type == CELL_PUB_AUDIO) || (pub_type == CELL_PUB_ONSET_HISTORY)) ? 0 : 1;
    const uint32_t pfx = (uint32_t)snprintf(publish_message_buffer, sizeof(publish_message_buffer), "AT+UMQTTC=2,%c,0,%u,\"%s\",\"", params.qos, hex_mode, broker_topics[pub_type]);
    const uint32_t encoded = ((pub_type == CELL_PUB_AUDIO) || (pub_type == CELL_PUB_ONSET_HISTORY)) ?
-      base64_encode_binary_data(publish_message_buffer + pfx, params.data, params.len) :
+      base85_encode_binary_data(publish_message_buffer + pfx, params.data, params.len) :
       hex_encode_binary_data(publish_message_buffer + pfx, params.data, params.len);
    arm_copy_q7((q7_t*)"\"\r", (q7_t*)publish_message_buffer + pfx + encoded, 2);
    message_len = pfx + encoded + 3;
@@ -1739,7 +1729,7 @@ void cell_update_state(void)
       return;
    }
 
-   // Priority 3: poll the modem to read each buffered message from the broker
+   // Priority 2: poll the modem to read each buffered message from the broker
    if (pending_messages)
    {
       cell_busy = 1;
