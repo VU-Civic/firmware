@@ -253,7 +253,7 @@ static volatile uint8_t cell_busy = 0, device_info_update = 0, mqtt_configured =
 static volatile uint8_t device_update_timer_count = 0, bad_network_conn_timer_count = 0, bad_pdp_timer_count = 0;
 static volatile uint8_t command_acked = 0, command_nacked = 0, timed_out = 0, in_holdoff_period = 0;
 static volatile uint8_t mqtt_connect_pending = 0, bad_mqtt_conn_timer_count = 0, mqtt_subscribed = 0;
-static volatile uint8_t incoming_message_pending = 0, onset_history_pending = 0;
+static volatile uint8_t onset_history_pending = 0;
 static volatile char sim_id[SIM_CARD_ID_MAX_LENGTH+1], *incoming_message = 0;
 static volatile uint32_t incoming_message_length, baud_rate = 0, cme_error = 0;
 
@@ -820,11 +820,6 @@ static uint8_t cell_configure_modem(void)
 
 static void handle_network_message(volatile char* config_data, uint32_t data_length, mqtt_device_message_t message_type)
 {
-   // Validate the message type
-   if ((message_type != MQTT_DEVICE_CONFIG_UPDATE) && (message_type != MQTT_DEVICE_TEST_MODE) &&
-       (message_type != MQTT_REQUEST_ONSETS) && (message_type != MQTT_DEVICE_RESET) && (message_type != MQTT_DEVICE_PING))
-      return;
-
    // Parse the updated configuration values from the JSON message
    double onset_timestamp = 0.0;
    uint8_t correct_device_intent = 0;
@@ -997,8 +992,6 @@ static char* handle_mqtt_message(char* msg, uint16_t max_msg_len, uint32_t prefi
          if (pending_messages)
             --pending_messages;
       }
-      else if (incoming_message)
-         incoming_message_pending = 1;
       else
          pending_messages = (uint8_t)atoi(msg_start + opcode_length + 1);
    }
@@ -1743,18 +1736,6 @@ void cell_update_state(void)
       }
       else
          cell_start_nonblocking_publish(CELL_PUB_DEVICE_INFO);
-      return;
-   }
-
-   // Priority 2: process any message content delivered directly via a URC before the read command
-   if (incoming_message_pending)
-   {
-      incoming_message_pending = 0;
-      if (incoming_message)
-         cell_process_network_message(incoming_message, incoming_message_length);
-      incoming_message = 0;
-      if (pending_messages)
-         --pending_messages;
       return;
    }
 

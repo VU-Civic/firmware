@@ -233,9 +233,9 @@ typedef enum
 {
    MQTT_DEVICE_CONFIG_UPDATE = '1',
    MQTT_DEVICE_TEST_MODE = '2',
+   MQTT_DEVICE_PING = '3',
    MQTT_REQUEST_ONSETS = '4',
-   MQTT_DEVICE_RESET = '8',
-   MQTT_DEVICE_PING = '16'
+   MQTT_DEVICE_RESET = '8'
 } mqtt_device_message_t;
 
 typedef enum
