@@ -196,7 +196,7 @@ typedef enum
 typedef enum
 {
    CELL_STEP_IDLE = 0,
-   CELL_STEP_WAIT_SIG_QUAL,
+   CELL_STEP_WAIT_SIG_QUAL_ONLY,
 #ifdef CELL_MQTT_USE_BINARY_PUBLISH
    CELL_STEP_WAIT_PUB_PROMPT,
 #endif
@@ -253,7 +253,7 @@ static volatile uint8_t cell_busy = 0, device_info_update = 0, mqtt_configured =
 static volatile uint8_t device_update_timer_count = 0, bad_network_conn_timer_count = 0, bad_pdp_timer_count = 0;
 static volatile uint8_t command_acked = 0, command_nacked = 0, timed_out = 0, in_holdoff_period = 0;
 static volatile uint8_t mqtt_connect_pending = 0, bad_mqtt_conn_timer_count = 0, mqtt_subscribed = 0;
-static volatile uint8_t onset_history_pending = 0;
+static volatile uint8_t onset_history_pending = 0, signal_quality_pending = 0, sig_qual_timer_count = 0;
 static volatile char sim_id[SIM_CARD_ID_MAX_LENGTH+1], *incoming_message = 0;
 static volatile uint32_t incoming_message_length, baud_rate = 0, cme_error = 0;
 
@@ -1229,6 +1229,11 @@ void LPTIM3_IRQHandler(void)
       device_update_timer_count = 0;
       device_info_update = 1;
    }
+   if (++sig_qual_timer_count >= CELL_SIG_QUAL_UPDATE_MINUTES)
+   {
+      sig_qual_timer_count = 0;
+      signal_quality_pending = 1;
+   }
 
    // Check whether there has been a network connectivity issue for too long
    if (valid_cgreg || valid_cereg)
@@ -1591,13 +1596,13 @@ void cell_update_state(void)
                cell_send_command_await_response(CELL_PDP_ACTIVATE_MSG, sizeof(CELL_PDP_ACTIVATE_MSG), 40000);
          }
          else if (!mqtt_connected)
-            cell_mqtt_connect();
-#ifdef CELL_MQTT_EXPLICIT_SUBSCRIBE
-         else if (!mqtt_subscribed)
          {
             cell_send_command_await_response(CELL_GET_SIGNAL_QUALITY_MSG, sizeof(CELL_GET_SIGNAL_QUALITY_MSG), 1000);
-            cell_mqtt_subscribe();
+            cell_mqtt_connect();
          }
+#ifdef CELL_MQTT_EXPLICIT_SUBSCRIBE
+         else if (!mqtt_subscribed)
+            cell_mqtt_subscribe();
 #endif
       }
       else if (bad_network_conn_timer_count >= CELL_BAD_CONN_TIMEOUT_MINUTES)
@@ -1616,10 +1621,10 @@ void cell_update_state(void)
    // Advance the non-blocking steady-state publish state machine
    switch (cell_step)
    {
-      case CELL_STEP_WAIT_SIG_QUAL:
-         // Signal quality poll complete — start the device info publish
+      case CELL_STEP_WAIT_SIG_QUAL_ONLY:
+         // Standalone signal quality poll complete — return to idle
          if (command_acked || command_nacked || timed_out)
-            cell_start_nonblocking_publish(CELL_PUB_DEVICE_INFO);
+            cell_step = CELL_STEP_IDLE;
          return;
 
 #ifdef CELL_MQTT_USE_BINARY_PUBLISH
@@ -1713,19 +1718,11 @@ void cell_update_state(void)
    if (cell_busy || !mqtt_connected)
       return;
 
-   // Priority 1: publish a pending device info update (poll signal quality first if PDP is active)
+   // Priority 1: publish a pending device info update
    if (device_info_update)
    {
       device_info_update = 0;
-      if (valid_pdp)
-      {
-         command_acked = command_nacked = 0;
-         cell_send_command(CELL_GET_SIGNAL_QUALITY_MSG, sizeof(CELL_GET_SIGNAL_QUALITY_MSG));
-         set_command_timeout(1000 / CELL_TIMER_MS_PER_TICK);
-         cell_step = CELL_STEP_WAIT_SIG_QUAL;
-      }
-      else
-         cell_start_nonblocking_publish(CELL_PUB_DEVICE_INFO);
+      cell_start_nonblocking_publish(CELL_PUB_DEVICE_INFO);
       return;
    }
 
@@ -1767,13 +1764,23 @@ void cell_update_state(void)
       cell_start_nonblocking_publish(CELL_PUB_AUDIO);
       return;
    }
+
+   // Priority 6: standalone signal quality poll to keep cached values fresh for alert messages
+   if (signal_quality_pending && valid_pdp)
+   {
+      signal_quality_pending = 0;
+      command_acked = command_nacked = 0;
+      cell_send_command(CELL_GET_SIGNAL_QUALITY_MSG, sizeof(CELL_GET_SIGNAL_QUALITY_MSG));
+      set_command_timeout(1000 / CELL_TIMER_MS_PER_TICK);
+      cell_step = CELL_STEP_WAIT_SIG_QUAL_ONLY;
+   }
 }
 
 uint8_t cell_pending_events(void)
 {
    // Return whether there are any pending events to be handled
    return configure_modem || connectivity_changed || device_info_update || pending_messages ||
-          cell_alert_tx_count || onset_history_pending || cell_audio_tx_count || (cell_step != CELL_STEP_IDLE);
+          cell_alert_tx_count || onset_history_pending || cell_audio_tx_count || signal_quality_pending || (cell_step != CELL_STEP_IDLE);
 }
 
 void cell_update_device_details(void)
