@@ -302,14 +302,14 @@ static double calculate_interchannel_delays(int64_t onset_samp_abs, int64_t curr
       gcc_phat_correlate(corr[c - 1], c, onset_samp_abs, current_start, audio_samples);
 
    // Joint search: find (d1, d2, d3) that maximizes the sum of correlation values subject to:
-   //   d1 >= d1_min  (elevation floor: mic pair 2 measures the vertical axis)
+   //   d1 <= d1_max  (elevation floor: mic pair 2 measures the vertical axis)
    //   d1^2 + d2^2 <= D_sq  (unit-sphere constraint)
    //   d3 in {d1+d2-1, d1+d2, d1+d2+1}  (geometric consistency with +-1 quantization slack)
    float best_score = -1e30f;
    int best_d1 = 0, best_d2 = 0, best_d3 = 0;
    const int D_sq = XCORR_MAX_DELAY_SAMP * XCORR_MAX_DELAY_SAMP + 1;
-   const int d1_min = (int)ceilf(sinf(AOA_MIN_ELEVATION_DEG * ((float)M_PI / 180.0f)) * (float)XCORR_MAX_DELAY_SAMP);
-   for (int d1 = d1_min; d1 <= XCORR_MAX_DELAY_SAMP; ++d1)
+   const int d1_max = (int)floorf(-sinf(AOA_MIN_ELEVATION_DEG * ((float)M_PI / 180.0f)) * (float)XCORR_MAX_DELAY_SAMP);
+   for (int d1 = -XCORR_MAX_DELAY_SAMP; d1 <= d1_max; ++d1)
    {
       const int i1 = (d1 >= 0) ? d1 : (XCORR_FFT_SIZE + d1);
       const float s1 = corr[0][i1];

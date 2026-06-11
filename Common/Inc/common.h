@@ -67,7 +67,7 @@
 #define MIC_CH1_CH3_OFFSET                   { 0.065f,   0.0f }
 #define MIC_CH1_CH4_OFFSET                   { 0.065f, 0.065f }
 
-#define AOA_MIN_ELEVATION_DEG                -15.0f
+#define AOA_MIN_ELEVATION_DEG                -45.0f
 
 #define AI_FIRMWARE_VERSION_LENGTH           8
 #define AI_NUM_CLASSES                       1
