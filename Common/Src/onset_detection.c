@@ -301,16 +301,27 @@ static void gcc_phat_correlate(float *out, int ch, int64_t onset_samp_abs, int64
    arm_rfft_fast_f32(&fft_xcorr, gcc_buf, out, 1);
 }
 
-static double calculate_interchannel_delays(int64_t onset_samp_abs, int64_t current_start, const int16_t (*audio_samples)[AUDIO_BUFFER_SAMPLES_PER_CHANNEL], double inter_channel_delays[AUDIO_NUM_CHANNELS - 1], int selected_ch, float *gcc_coherence)
+static double calculate_interchannel_delays(int64_t onset_samp_abs, int64_t current_start, const int16_t (*audio_samples)[AUDIO_BUFFER_SAMPLES_PER_CHANNEL], double inter_channel_delays[AUDIO_NUM_CHANNELS - 1], int selected_ch, float *gcc_coherence, channel_alarms_t channel_alarms)
 {
-   // Compute and cache the ch0 FFT once
-   fill_xcorr_channel(gcc_ch0_fft, 0, onset_samp_abs, current_start, audio_samples);
-   arm_fill_f32(0.0f, gcc_ch0_fft + XCORR_WINDOW_SIZE, XCORR_FFT_SIZE - XCORR_WINDOW_SIZE);
-   arm_rfft_fast_f32(&fft_xcorr, gcc_ch0_fft, gcc_ch0_fft, 0);
-
-   // Compute the GCC-PHAT correlation function for each channel pair
-   for (int c = 1; c < AUDIO_NUM_CHANNELS; ++c)
-      gcc_phat_correlate(corr[c - 1], c, onset_samp_abs, current_start, audio_samples);
+   // Compute and cache the ch0 FFT once; if any channel is alarmed, skip its contribution
+   if (!channel_alarms.alarm.ch1)
+   {
+      fill_xcorr_channel(gcc_ch0_fft, 0, onset_samp_abs, current_start, audio_samples);
+      arm_fill_f32(0.0f, gcc_ch0_fft + XCORR_WINDOW_SIZE, XCORR_FFT_SIZE - XCORR_WINDOW_SIZE);
+      arm_rfft_fast_f32(&fft_xcorr, gcc_ch0_fft, gcc_ch0_fft, 0);
+      if (!channel_alarms.alarm.ch2) gcc_phat_correlate(corr[0], 1, onset_samp_abs, current_start, audio_samples);
+      else arm_fill_f32(0.0f, corr[0], XCORR_FFT_SIZE);
+      if (!channel_alarms.alarm.ch3) gcc_phat_correlate(corr[1], 2, onset_samp_abs, current_start, audio_samples);
+      else arm_fill_f32(0.0f, corr[1], XCORR_FFT_SIZE);
+      if (!channel_alarms.alarm.ch4) gcc_phat_correlate(corr[2], 3, onset_samp_abs, current_start, audio_samples);
+      else arm_fill_f32(0.0f, corr[2], XCORR_FFT_SIZE);
+   }
+   else
+   {
+      arm_fill_f32(0.0f, corr[0], XCORR_FFT_SIZE);
+      arm_fill_f32(0.0f, corr[1], XCORR_FFT_SIZE);
+      arm_fill_f32(0.0f, corr[2], XCORR_FFT_SIZE);
+   }
 
    // Joint search: find (d1, d2, d3) that maximizes the sum of correlation values subject to:
    //   d1 <= d1_max  (elevation floor: mic pair 2 measures the vertical axis)
@@ -622,9 +633,9 @@ void onset_detection_invoke(double packet_timestamp, const int16_t (*audio_sampl
       // Retrieve all inter-channel delays along with a normalized event magnitude
       float gcc_coherence = 0.0f;
       double inter_channel_delays[AUDIO_NUM_CHANNELS - 1];
-      const double onset_magnitude = calculate_interchannel_delays(previous_raw_onset_sample, current_start, audio_samples, inter_channel_delays, selected_ch, &gcc_coherence);
+      const double onset_magnitude = calculate_interchannel_delays(previous_raw_onset_sample, current_start, audio_samples, inter_channel_delays, selected_ch, &gcc_coherence, packet->channel_alarms);
 #ifndef ONSET_DETECTOR_PERMISSIVE
-      if (gcc_coherence >= GCC_MIN_COHERENCE)
+      if ((gcc_coherence >= GCC_MIN_COHERENCE) || packet->channel_alarms.alarms)
 #endif
       {
          // Calculate the angle of arrival of the detected onset
