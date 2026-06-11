@@ -33,13 +33,24 @@
 
 #define FLUX_MIN_THRESHOLD                     0.6f
 #define FLUX_EMA_ALPHA                         0.01f
+#ifdef ONSET_DETECTOR_PERMISSIVE
+#define FLUX_THRESHOLD_NUM_SIGMAS              2.5f
+#else
 #define FLUX_THRESHOLD_NUM_SIGMAS              3.0f
+#endif
 #define FLUX_WARMUP_FRAMES                     50
 
+#ifdef ONSET_DETECTOR_PERMISSIVE
+#define BROADBAND_ACTIVATION_BIN_SIZE_HZ       500
+#define BROADBAND_ACTIVATION_MIN_THRESHOLD     0.75f
+#define BROADBAND_NOISE_EMA_ALPHA              0.01f
+#define BROADBAND_NOISE_RISE_LIN               2.511886f    // 10^(8.0 dB / 20.0)
+#else
 #define BROADBAND_ACTIVATION_BIN_SIZE_HZ       650
 #define BROADBAND_ACTIVATION_MIN_THRESHOLD     0.85f
 #define BROADBAND_NOISE_EMA_ALPHA              0.01f
 #define BROADBAND_NOISE_RISE_LIN               3.4273f
+#endif
 
 #define BROADBAND_BAND_BINS                    (BROADBAND_ACTIVATION_BIN_SIZE_HZ * FFT_FILTER_SIZE / AUDIO_SAMPLE_RATE_HZ)
 #define BROADBAND_NOISE_BANDS                  (NUM_FFT_BINS / BROADBAND_BAND_BINS)
@@ -454,6 +465,8 @@ static float compute_energy_band_ratio(void)
    return total_energy_high / (total_energy_low + 1e-12);
 }
 
+#ifndef ONSET_DETECTOR_PERMISSIVE
+
 static float compute_spectral_spikiness(void)
 {
    // Ratio of peak bin power to mean bin power within the detection band
@@ -462,6 +475,8 @@ static float compute_spectral_spikiness(void)
    arm_mean_f32(magnitudes + FFT_MIN_BIN, NUM_FFT_BINS + 1, &mean);
    return peak / (mean + 1e-12f);
 }
+
+#endif  // #ifndef ONSET_DETECTOR_PERMISSIVE
 
 static int check_onset_conditions(float flux, float adaptive_threshold)
 {
@@ -478,8 +493,10 @@ static int check_onset_conditions(float flux, float adaptive_threshold)
       return 0;
 
    // Gate 4: Spectral spikiness must be flat and non-harmonic
+#ifndef ONSET_DETECTOR_PERMISSIVE
    if (compute_spectral_spikiness() > SPECTRAL_SPIKINESS_THRESHOLD)
       return 0;
+#endif
 
    // Gate 5: Enforce minimum refractory period between onsets
    if (samples_since_prev_onset < MIN_SAMPLES_BETWEEN_ONSETS)
@@ -606,7 +623,9 @@ void onset_detection_invoke(double packet_timestamp, const int16_t (*audio_sampl
       float gcc_coherence = 0.0f;
       double inter_channel_delays[AUDIO_NUM_CHANNELS - 1];
       const double onset_magnitude = calculate_interchannel_delays(previous_raw_onset_sample, current_start, audio_samples, inter_channel_delays, selected_ch, &gcc_coherence);
+#ifndef ONSET_DETECTOR_PERMISSIVE
       if (gcc_coherence >= GCC_MIN_COHERENCE)
+#endif
       {
          // Calculate the angle of arrival of the detected onset
          float angle_of_arrival[3] = { 0 };
