@@ -254,7 +254,7 @@ static volatile uint8_t device_update_timer_count = 0, bad_network_conn_timer_co
 static volatile uint8_t command_acked = 0, command_nacked = 0, timed_out = 0, in_holdoff_period = 0;
 static volatile uint8_t mqtt_connect_pending = 0, bad_mqtt_conn_timer_count = 0, mqtt_subscribed = 0;
 static volatile uint8_t onset_history_pending = 0, signal_quality_pending = 0, sig_qual_timer_count = 0;
-static volatile uint8_t modem_retry_timer_count = 0, modem_retry_pending = 0;
+static volatile uint8_t modem_retry_timer_count = 0, modem_retry_pending = 0, modem_retry_total_count = 0;
 static volatile char sim_id[SIM_CARD_ID_MAX_LENGTH+1], *incoming_message = 0;
 static volatile uint32_t incoming_message_length, baud_rate = 0, cme_error = 0;
 
@@ -695,8 +695,10 @@ static void cell_reboot_firmware(uint8_t pdp_reboot)
 static uint8_t cell_configure_modem(void)
 {
    // Always poll for the device IMEI to use as the device ID
-   while ((data.packets[0].imei[0] == 0) && (data.packets[0].imei[1] == 0) && (data.packets[0].imei[2] == 0))
+   for (uint32_t outer = 0; (outer < 3) && (data.packets[0].imei[0] == 0) && (data.packets[0].imei[1] == 0) && (data.packets[0].imei[2] == 0); ++outer)
       for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_RETRIEVE_IMEI_MSG, sizeof(CELL_RETRIEVE_IMEI_MSG), 1000); ++retries);
+   if ((data.packets[0].imei[0] == 0) && (data.packets[0].imei[1] == 0) && (data.packets[0].imei[2] == 0))
+      return 0;
    device_info.device_id = strtoull((char*)data.packets[0].imei, NULL, 10);
 
    // Poll for the SIM card ID to verify that a card is present
@@ -803,17 +805,13 @@ static uint8_t cell_configure_modem(void)
       CLEAR_BIT(RCC->APB4ENR, RCC_APB4ENR_LPTIM3EN);
       CLEAR_BIT(RCC->APB1LENR, CELL_UART_CONCAT(RCC_APB1LENR_, CELL_UART_TYPE, CELL_UART_NUMBER, EN));
 
-#else
-
-      // SIM must always be present in production; schedule a retry via LPTIM3
-      modem_retry_timer_count = 0;
-      modem_retry_pending = 1;
-
 #endif
    }
 
-   // Clear the configuration request flag
+   // Clear the configuration request flag and any pending retry state on success
    configure_modem = 0;
+   if (sim_present)
+      modem_retry_total_count = 0;
    return sim_present;
 }
 
@@ -1615,9 +1613,11 @@ void cell_init(void)
    if (cell_configure_modem())
       cell_restart_status_timer();
 #ifdef SIM_REQUIRED
+   else if (++modem_retry_total_count >= CELL_MODEM_MAX_RETRY_COUNT)
+      chip_reset();
    else
    {
-      // SIM was not detected; start LPTIM3 counting to enable retries
+      // SIM or IMEI not detected; start LPTIM3 counting to enable retries
       modem_retry_timer_count = 0;
       modem_retry_pending = 1;
       SET_BIT(LPTIM3->CR, LPTIM_CR_CNTSTRT);
@@ -1636,6 +1636,8 @@ void cell_update_state(void)
       if (cell_configure_modem())
          cell_restart_status_timer();
 #ifdef SIM_REQUIRED
+      else if (++modem_retry_total_count >= CELL_MODEM_MAX_RETRY_COUNT)
+         chip_reset();
       else
       {
          modem_retry_timer_count = 0;

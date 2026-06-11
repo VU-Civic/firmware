@@ -33,6 +33,7 @@
 #define CELL_BAD_PDP_TIMEOUT_MINUTES         2
 #define CELL_BAD_MQTT_TIMEOUT_MINUTES        5
 #define CELL_SIG_QUAL_UPDATE_MINUTES         7
+#define CELL_MODEM_MAX_RETRY_COUNT           2
 #define CELL_SERVER_RESPONSE_TIMEOUT_SECONDS 5
 #define CELL_IMEI_LENGTH                     15
 #define CELL_IMSI_LENGTH                     15
