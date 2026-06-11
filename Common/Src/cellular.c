@@ -105,7 +105,7 @@
 #define CELL_READ_MQTTSN_CONFIG_MSG       "AT+UMQTTSN?\r"
 #define CELL_SAVE_MQTTSN_CONFIG_MSG       "AT+UMQTTSNNV=2\r"
 #define CELL_LOAD_MQTTSN_CONFIG_MSG       "AT+UMQTTSNNV=1\r"
-#define CELL_MQTTSN_SET_AUTO_PING_MSG     "AT+UMQTTSNC=10,0\r"
+#define CELL_MQTTSN_SET_AUTO_PING_MSG     "AT+UMQTTSNC=10,1\r"
 #define CELL_MQTTSN_CONNECT_MSG           "AT+UMQTTSNC=1\r"
 #define CELL_MQTTSN_REGISTER_MSG          "AT+UMQTTSNC=2,"
 #define CELL_MQTTSN_PUBLISH_INFO_MSG      "AT+UMQTTSNC=4,0,0,1,1,\"" STRINGIZE(CELL_MQTT_DEVICES_TOPIC) "\",\""
@@ -129,7 +129,7 @@
 #define CELL_MQTT_SET_SECURE_MSG          "AT+UMQTT=11,1," STRINGIZE(CELL_MQTT_TLS_PROFILE) "\r"
 #define CELL_MQTT_SET_CLEAN_SESSION_MSG   "AT+UMQTT=12,1\r"
 #define CELL_MQTT_SET_RESP_TIMEOUT_MSG    "AT+UMQTT=13," STRINGIZE(CELL_SERVER_RESPONSE_TIMEOUT_SECONDS) "\r"
-#define CELL_MQTT_SET_AUTO_PING_MSG       "AT+UMQTTC=8,0\r"
+#define CELL_MQTT_SET_AUTO_PING_MSG       "AT+UMQTTC=8," STRINGIZE(CELL_CONNECTION_TIMEOUT_SECONDS) "\r"
 #define CELL_MQTT_CONNECT_MSG             "AT+UMQTTC=1\r"
 #define CELL_MQTT_READ_MSG                "AT+UMQTTC=6,1\r"
 
@@ -254,6 +254,7 @@ static volatile uint8_t device_update_timer_count = 0, bad_network_conn_timer_co
 static volatile uint8_t command_acked = 0, command_nacked = 0, timed_out = 0, in_holdoff_period = 0;
 static volatile uint8_t mqtt_connect_pending = 0, bad_mqtt_conn_timer_count = 0, mqtt_subscribed = 0;
 static volatile uint8_t onset_history_pending = 0, signal_quality_pending = 0, sig_qual_timer_count = 0;
+static volatile uint8_t modem_retry_timer_count = 0, modem_retry_pending = 0;
 static volatile char sim_id[SIM_CARD_ID_MAX_LENGTH+1], *incoming_message = 0;
 static volatile uint32_t incoming_message_length, baud_rate = 0, cme_error = 0;
 
@@ -365,7 +366,7 @@ static void cell_mqtt_connect(void)
    else if (mqtt_connect_pending)
       return;
 
-   // Disable auto-pinging since we should already be sending device status messages regularly
+   // Enable auto-pinging as a fallback keepalive in case no other traffic is generated
 #ifdef USE_MQTT_SN
    cell_send_command_await_response(CELL_MQTTSN_SET_AUTO_PING_MSG, sizeof(CELL_MQTTSN_SET_AUTO_PING_MSG), 1000);
 #else
@@ -685,6 +686,10 @@ static void cell_reboot_firmware(uint8_t pdp_reboot)
       cell_send_command_await_response(CELL_DISABLE_RADIO_MSG, sizeof(CELL_DISABLE_RADIO_MSG), 1000);
       cell_send_command_await_response(CELL_ENABLE_RADIO_MSG, sizeof(CELL_ENABLE_RADIO_MSG), 1000);
    }
+
+   // Force a full modem reconfiguration after any radio-level recovery attempt
+   mqtt_configured = 0;
+   configure_modem = 1;
 }
 
 static uint8_t cell_configure_modem(void)
@@ -799,7 +804,11 @@ static uint8_t cell_configure_modem(void)
       CLEAR_BIT(RCC->APB1LENR, CELL_UART_CONCAT(RCC_APB1LENR_, CELL_UART_TYPE, CELL_UART_NUMBER, EN));
 
 #else
-      chip_reset();
+
+      // SIM must always be present in production; schedule a retry via LPTIM3
+      modem_retry_timer_count = 0;
+      modem_retry_pending = 1;
+
 #endif
    }
 
@@ -915,17 +924,13 @@ static void handle_network_message(volatile char* config_data, uint32_t data_len
          }
          break;
       case MQTT_DEVICE_CONFIG_UPDATE:
-         // Update the device reporting timer if status reporting has changed
-         if (new_config.device_status_transmission_interval_minutes && !device_info.device_config.device_status_transmission_interval_minutes)
+         // Status interval must always be non-zero; clamp before applying
+         if (!new_config.device_status_transmission_interval_minutes)
+            new_config.device_status_transmission_interval_minutes = DEFAULT_DEVICE_STATUS_UPDATE_INTERVAL_MINUTES;
+
+         // Start the update timer if it was previously inactive
+         if (!device_info.device_config.device_status_transmission_interval_minutes)
             SET_BIT(LPTIM3->CR, LPTIM_CR_CNTSTRT);
-         else if (!new_config.device_status_transmission_interval_minutes && device_info.device_config.device_status_transmission_interval_minutes)
-         {
-            CLEAR_BIT(LPTIM3->CR, LPTIM_CR_ENABLE);
-            while (READ_BIT(LPTIM3->CR, LPTIM_CR_ENABLE));
-            SET_BIT(LPTIM3->CR, LPTIM_CR_ENABLE);
-            WRITE_REG(LPTIM3->ARR, CELL_TIMER_1MIN_COUNT);
-            while (READ_REG(LPTIM3->ARR) != CELL_TIMER_1MIN_COUNT);
-         }
 
          // Update the AI configuration parameters
          data.packets[0].ai_config.audio_clip_length_seconds = data.packets[1].ai_config.audio_clip_length_seconds = new_config.audio_clip_length_seconds;
@@ -1253,9 +1258,14 @@ void LPTIM3_IRQHandler(void)
             // Retry MQTT connect if the broker CONNACK was never received or was silently dropped
             if (++bad_mqtt_conn_timer_count >= CELL_BAD_MQTT_TIMEOUT_MINUTES)
             {
-               bad_mqtt_conn_timer_count = 0;
                mqtt_connect_pending = 0;
                connectivity_changed = 1;
+               if (bad_mqtt_conn_timer_count >= CELL_BAD_MQTT_TIMEOUT_MINUTES * 3)
+               {
+                  bad_mqtt_conn_timer_count = 0;
+                  mqtt_configured = 0;
+                  configure_modem = 1;
+               }
             }
          }
          else
@@ -1270,6 +1280,18 @@ void LPTIM3_IRQHandler(void)
    }
    else if (++bad_network_conn_timer_count >= CELL_BAD_CONN_TIMEOUT_MINUTES)
       connectivity_changed = 1;
+
+#ifdef SIM_REQUIRED
+
+   // Periodically re-attempt modem initialization if a prior attempt failed to detect the SIM
+   if (modem_retry_pending && (++modem_retry_timer_count >= CELL_BAD_MQTT_TIMEOUT_MINUTES))
+   {
+      modem_retry_timer_count = 0;
+      modem_retry_pending = 0;
+      configure_modem = 1;
+   }
+
+#endif
 }
 
 void LPTIM4_IRQHandler(void)
@@ -1355,6 +1377,29 @@ void cell_power_on(void)
 
    // Power on the cellular modem
    cell_toggle_power(1);
+}
+
+static void cell_restart_status_timer(void)
+{
+   // Re-enable the RCC clock and fully re-initialize LPTIM3
+   if (!READ_BIT(RCC->APB4ENR, RCC_APB4ENR_LPTIM3EN))
+   {
+      SET_BIT(RCC->APB4ENR, RCC_APB4ENR_LPTIM3EN);
+      (void)READ_BIT(RCC->APB4ENR, RCC_APB4ENR_LPTIM3EN);
+      CLEAR_BIT(LPTIM3->CR, LPTIM_CR_ENABLE);
+      while (READ_BIT(LPTIM3->CR, LPTIM_CR_ENABLE));
+      MODIFY_REG(LPTIM3->CFGR, (LPTIM_CFGR_CKSEL | LPTIM_CFGR_TRIGEN | LPTIM_CFGR_PRELOAD | LPTIM_CFGR_WAVPOL | LPTIM_CFGR_PRESC | LPTIM_CFGR_COUNTMODE), LPTIM_PRESCALER_DIV128);
+      WRITE_REG(LPTIM3->IER, LPTIM_IT_ARRM);
+      SET_BIT(LPTIM3->CR, LPTIM_CR_ENABLE);
+      WRITE_REG(LPTIM3->ARR, CELL_TIMER_1MIN_COUNT);
+      while (READ_REG(LPTIM3->ARR) != CELL_TIMER_1MIN_COUNT);
+   }
+
+   // Unconditionally re-enable the NVIC IRQ and restart the counter
+   NVIC_SetPriority(LPTIM3_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 0, 0));
+   NVIC_EnableIRQ(LPTIM3_IRQn);
+   device_update_timer_count = 0;
+   SET_BIT(LPTIM3->CR, LPTIM_CR_CNTSTRT);
 }
 
 void cell_init(void)
@@ -1568,11 +1613,16 @@ void cell_init(void)
 
    // Configure all general non-persistent modem parameters
    if (cell_configure_modem())
+      cell_restart_status_timer();
+#ifdef SIM_REQUIRED
+   else
    {
-      // Start a continuous device info update timer if enabled
-      if (device_info.device_config.device_status_transmission_interval_minutes)
-         SET_BIT(LPTIM3->CR, LPTIM_CR_CNTSTRT);
+      // SIM was not detected; start LPTIM3 counting to enable retries
+      modem_retry_timer_count = 0;
+      modem_retry_pending = 1;
+      SET_BIT(LPTIM3->CR, LPTIM_CR_CNTSTRT);
    }
+#endif
 }
 
 void cell_update_state(void)
@@ -1583,7 +1633,15 @@ void cell_update_state(void)
       cell_step = CELL_STEP_IDLE;
       cell_busy = 0;
       mqtt_operation_awaiting_ack = MQTT_DONE;
-      cell_configure_modem();
+      if (cell_configure_modem())
+         cell_restart_status_timer();
+#ifdef SIM_REQUIRED
+      else
+      {
+         modem_retry_timer_count = 0;
+         modem_retry_pending = 1;
+      }
+#endif
    }
 
    // Handle connectivity changes (blocking is acceptable here)

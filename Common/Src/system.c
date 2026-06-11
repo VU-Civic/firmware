@@ -155,6 +155,10 @@ void chip_read_config(void)
       chip_update_config();
    }
 
+   // Clamp fields that must never be zero, guarding against values written by older firmware
+   if (!device_info.device_config.device_status_transmission_interval_minutes)
+      device_info.device_config.device_status_transmission_interval_minutes = DEFAULT_DEVICE_STATUS_UPDATE_INTERVAL_MINUTES;
+
 #endif
 }
 
