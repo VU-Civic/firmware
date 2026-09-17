@@ -82,6 +82,9 @@
 #define CELL_PDP_ACTIVATE_MSG             "AT+CGACT=1,1\r"
 #define CELL_PDP_DEACTIVATE_MSG           "AT+CGACT=0,1\r"
 #define CELL_POLL_PDP_ACTIVE_MSG          "AT+CGACT?\r"
+#define CELL_POLL_IP_ADDRESS_MSG          "AT+CGPADDR=" STRINGIZE(CELL_PDP_CONTEXT_ID) "\r"
+#define CELL_IP_ADDRESS_MSG               "+CGPADDR:"
+#define CELL_UNASSIGNED_IPV4_ADDRESS      "0.0.0.0"
 #define CELL_POLL_CGREG_MSG               "AT+CGREG?\r"
 #define CELL_POLL_CEREG_MSG               "AT+CEREG?\r"
 #define CELL_POLL_COPS_MSG                "AT+COPS?\r"
@@ -133,8 +136,11 @@
 #define CELL_MQTT_CONNECT_MSG             "AT+UMQTTC=1\r"
 #define CELL_MQTT_READ_MSG                "AT+UMQTTC=6,1\r"
 
-#define CGEV_PDN_ACT_MSG                  "ME PDN ACT 1"
-#define CGEV_PDN_DEACT_MSG                "ME PDN DEACT 1"
+#define CGEV_ORIGINATOR_ME                "ME "
+#define CGEV_ORIGINATOR_NW                "NW "
+#define CGEV_PDN_ACT_MSG                  "PDN ACT"
+#define CGEV_PDN_DEACT_MSG                "PDN DEACT"
+#define CGEV_DETACH_MSG                   "DETACH"
 
 #define AT_RESPONSE_OK                    "0\r"
 #define AT_RESPONSE_NO_CARRIER            "3\r"
@@ -197,6 +203,8 @@ typedef enum
 {
    CELL_STEP_IDLE = 0,
    CELL_STEP_WAIT_SIG_QUAL_ONLY,
+   CELL_STEP_WAIT_BEARER_CGACT,
+   CELL_STEP_WAIT_BEARER_ADDR,
 #ifdef CELL_MQTT_USE_BINARY_PUBLISH
    CELL_STEP_WAIT_PUB_PROMPT,
 #endif
@@ -241,8 +249,9 @@ static historical_onset_message_t historical_onset_message;
 static alert_message_t cell_alert_tx_ring[CELL_ALERT_TX_RING_SIZE];
 static cell_audio_tx_item_t cell_audio_tx_ring[CELL_AUDIO_TX_RING_SIZE];
 static char publish_message_buffer[CELL_MAX_AT_COMMAND_SIZE];
-static volatile uint32_t cell_alert_tx_head, cell_alert_tx_count;
-static volatile uint32_t cell_audio_tx_head, cell_audio_tx_count;
+static volatile uint32_t cell_alert_tx_head, cell_alert_tx_count, cell_audio_tx_head, cell_audio_tx_count;
+static volatile uint32_t incoming_message_length, baud_rate = 0, cme_error = 0;
+static volatile uint16_t publish_stall_timer_count = 0;
 static volatile cell_step_t cell_step = CELL_STEP_IDLE;
 static volatile cell_pub_type_t cell_pending_pub = CELL_PUB_DEVICE_INFO;
 static volatile mqtt_operation_t mqtt_operation_awaiting_ack = MQTT_DONE;
@@ -251,12 +260,13 @@ static volatile uint8_t cell_modem_available = 0, configure_modem = 0, mqtt_conn
 static volatile uint8_t valid_cgreg = 0, valid_cereg = 0, valid_pdp = 0, temperature_alert = 0, reading_imsi = 0;
 static volatile uint8_t cell_busy = 0, device_info_update = 0, mqtt_configured = 0, prompt_received = 0;
 static volatile uint8_t device_update_timer_count = 0, bad_network_conn_timer_count = 0, bad_pdp_timer_count = 0;
+static volatile uint8_t cgact_query_active = 0, cgact_context_active = 0, consecutive_publish_failures = 0;
+static volatile uint8_t publish_stall_pending = 0, publish_stall_escalation = 0, bearer_check_pending = 0, bearer_check_timer_count = 0;
 static volatile uint8_t command_acked = 0, command_nacked = 0, timed_out = 0, in_holdoff_period = 0;
 static volatile uint8_t mqtt_connect_pending = 0, bad_mqtt_conn_timer_count = 0, mqtt_subscribed = 0;
 static volatile uint8_t onset_history_pending = 0, signal_quality_pending = 0, sig_qual_timer_count = 0;
 static volatile uint8_t modem_retry_timer_count = 0, modem_retry_pending = 0, modem_retry_total_count = 0;
 static volatile char sim_id[SIM_CARD_ID_MAX_LENGTH+1], *incoming_message = 0;
-static volatile uint32_t incoming_message_length, baud_rate = 0, cme_error = 0;
 
 #ifndef USE_MQTT_SN
 static char broker_topic_info[MQTT_TOPIC_MAX_SIZE], broker_topic_alert[MQTT_TOPIC_MAX_SIZE];
@@ -265,6 +275,27 @@ static char broker_topic_audio[MQTT_TOPIC_MAX_SIZE], broker_topic_onsets[MQTT_TO
 
 
 // Private Helper Functions --------------------------------------------------------------------------------------------
+
+static void cgact_query_begin(void)
+{
+   // Arm the accumulator for one "AT+CGACT?" response
+   cgact_context_active = 0;
+   cgact_query_active = 1;
+}
+
+static void cgact_query_finish(void)
+{
+   // Apply the verdict for the query that just completed
+   if (cgact_query_active)
+   {
+      cgact_query_active = 0;
+      if (cgact_context_active != valid_pdp)
+      {
+         valid_pdp = cgact_context_active;
+         connectivity_changed = 1;
+      }
+   }
+}
 
 static char* find_start_of_message(char* msg, uint32_t msg_preamble_size, uint16_t* max_msg_len)
 {
@@ -339,12 +370,14 @@ static void cell_send_command(char *command, uint32_t command_len)
    WRITE_REG(DMA2_Stream3->M0AR, (uint32_t)command);
    WRITE_REG(DMA2_Stream3->NDTR, command_len-1);
    SET_BIT(DMA2_Stream3->CR, DMA_SxCR_EN);
+
+   // Discard any acknowledgement or data prompt still latched from an earlier command
+   command_acked = command_nacked = prompt_received = 0;
 }
 
 static uint8_t cell_send_command_await_response(char *command, uint32_t command_len, uint32_t timeout_ms)
 {
-   // Send the command and wait until an ACK or NACK is received or the timeout is reached
-   command_acked = command_nacked = 0;
+   // Send the command and wait until an ACK or NACK is received or the timeout is reached.
    cell_send_command(command, command_len);
    set_command_timeout(timeout_ms / CELL_TIMER_MS_PER_TICK);
    while (!command_acked && !command_nacked && !timed_out)
@@ -555,13 +588,11 @@ static void cell_start_nonblocking_publish(cell_pub_type_t pub_type)
    cell_pending_pub = pub_type;
    cell_busy = 1;
    mqtt_result = 0;
-   command_acked = command_nacked = 0;
    const pub_params_t params = cell_get_pub_params(pub_type);
 
 #ifdef CELL_MQTT_USE_BINARY_PUBLISH
 
    // Transmit the command header and wait for the binary data prompt
-   prompt_received = 0;
    mqtt_operation_awaiting_ack = MQTT_PUBLISH_BINARY;
    in_holdoff_period = 0;
    switch (pub_type)
@@ -783,7 +814,10 @@ static uint8_t cell_configure_modem(void)
       *(uint64_t*)evidence_message.device_id = historical_onset_message.device_id = strtoull((char*)data.packets[0].imei, NULL, 10);
       for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_POLL_CGREG_MSG, sizeof(CELL_POLL_CGREG_MSG), 500); ++retries);
       for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_POLL_CEREG_MSG, sizeof(CELL_POLL_CEREG_MSG), 500); ++retries);
-      for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_POLL_PDP_ACTIVE_MSG, sizeof(CELL_POLL_PDP_ACTIVE_MSG), 1000); ++retries);
+      cgact_query_begin();
+      for (uint32_t retries = 0; (retries < 3) && !cell_send_command_await_response(CELL_POLL_PDP_ACTIVE_MSG, sizeof(CELL_POLL_PDP_ACTIVE_MSG), 1000); ++retries)
+         cgact_query_begin();
+      cgact_query_finish();
    }
    else  // No SIM card present
    {
@@ -996,8 +1030,24 @@ static char* handle_mqtt_message(char* msg, uint16_t max_msg_len, uint32_t prefi
    }
    else
    {
+      // Publish results are the only reliable evidence that the data path still works
       mqtt_result = (msg_start[opcode_length + 1] == '1');
       msg = find_end_of_message(msg_start, &max_msg_len) + 1;
+      if (((mqtt_operation == MQTT_PUBLISH) || (mqtt_operation == MQTT_PUBLISH_BINARY)) && (mqtt_operation_awaiting_ack == mqtt_operation))
+      {
+         if (mqtt_result)
+         {
+            consecutive_publish_failures = 0;
+            publish_stall_timer_count = 0;
+            publish_stall_escalation = 0;
+         }
+         else
+         {
+            if (consecutive_publish_failures < 255)
+               ++consecutive_publish_failures;
+            bearer_check_pending = 1;
+         }
+      }
    }
    if (mqtt_operation == mqtt_operation_awaiting_ack)
       mqtt_operation_awaiting_ack = MQTT_DONE;
@@ -1076,11 +1126,24 @@ static uint16_t cell_process_message(char* msg, uint16_t max_msg_len)
    else if ((max_msg_len >= (6 + sizeof(CELL_NETWORK_EVENT_MSG))) && (memcmp(msg, CELL_NETWORK_EVENT_MSG, sizeof(CELL_NETWORK_EVENT_MSG) - 1) == 0))
    {
       char *msg_start = find_start_of_message(msg, sizeof(CELL_NETWORK_EVENT_MSG) - 1, &max_msg_len);
+      char *event = msg_start;
+      uint16_t event_len = max_msg_len;
       msg = find_end_of_message(msg_start, &max_msg_len) + 1;
-      if (memcmp(msg_start, CGEV_PDN_ACT_MSG, sizeof(CGEV_PDN_ACT_MSG)-1) == 0)
-         valid_pdp = 1;
-      else if (memcmp(msg_start, CGEV_PDN_DEACT_MSG, sizeof(CGEV_PDN_DEACT_MSG)-1) == 0)
+
+      // Strip the originator so that a network-initiated event is treated exactly like a mobile-initiated one
+      if ((event_len >= (sizeof(CGEV_ORIGINATOR_ME) - 1)) && ((memcmp(event, CGEV_ORIGINATOR_ME, sizeof(CGEV_ORIGINATOR_ME) - 1) == 0) || (memcmp(event, CGEV_ORIGINATOR_NW, sizeof(CGEV_ORIGINATOR_NW) - 1) == 0)))
+      {
+         event += (sizeof(CGEV_ORIGINATOR_ME) - 1);
+         event_len -= (sizeof(CGEV_ORIGINATOR_ME) - 1);
+      }
+
+      // The trailing context identifier is deliberately not matched; the modem is not consistent about it
+      if ((event_len >= (sizeof(CGEV_PDN_DEACT_MSG) - 1)) && (memcmp(event, CGEV_PDN_DEACT_MSG, sizeof(CGEV_PDN_DEACT_MSG) - 1) == 0))
          valid_pdp = 0;
+      else if ((event_len >= (sizeof(CGEV_PDN_ACT_MSG) - 1)) && (memcmp(event, CGEV_PDN_ACT_MSG, sizeof(CGEV_PDN_ACT_MSG) - 1) == 0))
+         valid_pdp = 1;
+      else if ((event_len >= (sizeof(CGEV_DETACH_MSG) - 1)) && (memcmp(event, CGEV_DETACH_MSG, sizeof(CGEV_DETACH_MSG) - 1) == 0))
+         valid_pdp = 0;   // A detach takes every context with it, whichever side initiated it
       connectivity_changed = 1;
    }
 #ifdef USE_MQTT_SN
@@ -1116,11 +1179,49 @@ static uint16_t cell_process_message(char* msg, uint16_t max_msg_len)
    }
    else if ((max_msg_len >= (4 + sizeof(CELL_PDP_ACTIVE_MSG))) && (memcmp(msg, CELL_PDP_ACTIVE_MSG, sizeof(CELL_PDP_ACTIVE_MSG) - 1) == 0))
    {
-      msg = find_start_of_message(msg, sizeof(CELL_PDP_ACTIVE_MSG) - 1, &max_msg_len) + 5;
-      if (msg[-5] == '1')
+      char *field = find_start_of_message(msg, sizeof(CELL_PDP_ACTIVE_MSG) - 1, &max_msg_len);
+      uint16_t remaining = max_msg_len;
+      const uint32_t context_id = (uint32_t)atoi(field);
+      char *state_field = field;
+      while (remaining && (*state_field != ',') && (*state_field != '\r') && (*state_field != '\n'))
       {
-         valid_pdp = (msg[-3] == '1');
-         connectivity_changed = 1;
+         --remaining;
+         ++state_field;
+      }
+      const uint8_t now_active = (remaining && (*state_field == ',')) ? (atoi(state_field + 1) != 0) : 0;
+      msg = find_end_of_message(field, &max_msg_len) + 1;
+      if (context_id == CELL_PDP_CONTEXT_ID)
+      {
+         if (now_active)
+            cgact_context_active = 1;
+         if (!cgact_query_active)
+         {
+            valid_pdp = now_active;
+            connectivity_changed = 1;
+         }
+      }
+   }
+   else if ((max_msg_len >= (1 + sizeof(CELL_IP_ADDRESS_MSG))) && (memcmp(msg, CELL_IP_ADDRESS_MSG, sizeof(CELL_IP_ADDRESS_MSG) - 1) == 0))
+   {
+      char *field = find_start_of_message(msg, sizeof(CELL_IP_ADDRESS_MSG) - 1, &max_msg_len);
+      uint16_t remaining = max_msg_len;
+      const uint32_t context_id = (uint32_t)atoi(field);
+      char *address = field;
+      while (remaining && (*address != ',') && (*address != '\r') && (*address != '\n'))
+      {
+         --remaining;
+         ++address;
+      }
+      const uint8_t have_address = (remaining && (*address == ','));
+      msg = find_end_of_message(field, &max_msg_len) + 1;   // NUL-terminates the line for the search below
+      if (context_id == CELL_PDP_CONTEXT_ID)
+      {
+         const uint8_t usable = have_address && (address[1] != '\0') && (strstr(address + 1, CELL_UNASSIGNED_IPV4_ADDRESS) == NULL);
+         if (!usable && valid_pdp)
+         {
+            valid_pdp = 0;
+            connectivity_changed = 1;
+         }
       }
    }
    else if ((max_msg_len >= (1 + sizeof(CELL_CEREG_RESPONSE_MSG))) && (memcmp(msg, CELL_CEREG_RESPONSE_MSG, sizeof(CELL_CEREG_RESPONSE_MSG) - 1) == 0))
@@ -1243,6 +1344,25 @@ void LPTIM3_IRQHandler(void)
       sig_qual_timer_count = 0;
       signal_quality_pending = 1;
    }
+   if (++bearer_check_timer_count >= CELL_BEARER_CHECK_INTERVAL_MINUTES)
+   {
+      bearer_check_timer_count = 0;
+      bearer_check_pending = 1;
+   }
+
+   // Supervise actual delivery
+   if (mqtt_connected && valid_pdp)
+   {
+      uint16_t stall_limit_minutes = (uint16_t)(CELL_PUBLISH_STALL_INTERVAL_MULTIPLE * device_info.device_config.device_status_transmission_interval_minutes) + CELL_PUBLISH_STALL_EXTRA_MINUTES;
+      if (stall_limit_minutes < CELL_PUBLISH_STALL_MIN_MINUTES)
+         stall_limit_minutes = CELL_PUBLISH_STALL_MIN_MINUTES;
+      if (publish_stall_timer_count < 0xFFFFU)
+         ++publish_stall_timer_count;
+      if (!publish_stall_pending && ((consecutive_publish_failures >= CELL_MAX_CONSECUTIVE_PUBLISH_FAILURES) || (publish_stall_timer_count >= stall_limit_minutes)))
+         publish_stall_pending = 1;
+   }
+   else
+      publish_stall_timer_count = 0;
 
    // Check whether there has been a network connectivity issue for too long
    if (valid_cgreg || valid_cereg)
@@ -1646,6 +1766,22 @@ void cell_update_state(void)
 #endif
    }
 
+   // Act on a stalled delivery path before anything else
+   if (publish_stall_pending && !cell_busy)
+   {
+      publish_stall_pending = 0;
+      consecutive_publish_failures = 0;
+      publish_stall_timer_count = 0;
+      if (publish_stall_escalation < 255)
+         ++publish_stall_escalation;
+
+      // Cycle the context, then the radio, and optionally escalate to a full firmware reboot
+      valid_pdp = 0;
+      mqtt_connected = 0;
+      cell_reboot_firmware(publish_stall_escalation == 1);
+      return;
+   }
+
    // Handle connectivity changes (blocking is acceptable here)
    if (connectivity_changed)
    {
@@ -1693,6 +1829,31 @@ void cell_update_state(void)
             cell_step = CELL_STEP_IDLE;
          return;
 
+      case CELL_STEP_WAIT_BEARER_CGACT:
+      {
+         // Resolve the context listing, then ask what address that context actually holds
+         const uint8_t acked = command_acked, nacked = command_nacked, expired = timed_out;
+         if (!acked && !nacked && !expired)
+            return;
+         if (acked)
+            cgact_query_finish();
+         else
+            cgact_query_active = 0;
+         cell_send_command(CELL_POLL_IP_ADDRESS_MSG, sizeof(CELL_POLL_IP_ADDRESS_MSG));
+         set_command_timeout(1000 / CELL_TIMER_MS_PER_TICK);
+         cell_step = CELL_STEP_WAIT_BEARER_ADDR;
+         return;
+      }
+
+      case CELL_STEP_WAIT_BEARER_ADDR:
+         // The address query has completed and was evaluated as it was parsed
+         if (command_acked || command_nacked || timed_out)
+         {
+            cell_busy = 0;
+            cell_step = CELL_STEP_IDLE;
+         }
+         return;
+
 #ifdef CELL_MQTT_USE_BINARY_PUBLISH
 
       case CELL_STEP_WAIT_PUB_PROMPT:
@@ -1712,7 +1873,6 @@ void cell_update_state(void)
                case CELL_PUB_AUDIO: data_ptr = (const char*)&cell_audio_tx_ring[cell_audio_tx_head].message; break;
                case CELL_PUB_ONSET_HISTORY: data_ptr = (const char*)&historical_onset_message; break;
             }
-            command_acked = command_nacked = 0;
             cell_send_command((char*)data_ptr, data_len + 1);
             set_command_timeout(1000 / CELL_TIMER_MS_PER_TICK);
             cell_step = CELL_STEP_WAIT_PUB_CMD_ACK;
@@ -1730,8 +1890,10 @@ void cell_update_state(void)
 #endif
 
       case CELL_STEP_WAIT_PUB_CMD_ACK:
+      {
          // Waiting for the AT command-level "OK" acknowledgment
-         if (command_acked && mqtt_connected)
+         const uint8_t acked = command_acked, nacked = command_nacked, expired = timed_out, connected = mqtt_connected;
+         if (acked && connected)
          {
 #ifndef USE_MQTT_SN
             // For QoS 0, AWS IoT Core sends no PUBACK URC — advance immediately
@@ -1748,7 +1910,7 @@ void cell_update_state(void)
             set_command_timeout(CELL_MAX_NETWORK_RESPONSE_MS / CELL_TIMER_MS_PER_TICK);
             cell_step = CELL_STEP_WAIT_PUB_NET_ACK;
          }
-         else if (command_acked || command_nacked || timed_out)
+         else if (acked || nacked || expired)
          {
             mqtt_operation_awaiting_ack = MQTT_DONE;
             cell_busy = 0;
@@ -1756,6 +1918,7 @@ void cell_update_state(void)
             cell_advance_tx_rings();
          }
          return;
+      }
 
       case CELL_STEP_WAIT_PUB_NET_ACK:
          // Waiting for the network-level publish acknowledgment URC
@@ -1781,6 +1944,18 @@ void cell_update_state(void)
          break;
    }
 
+   // Verify the bearer directly rather than waiting for the modem to volunteer a "+CGEV"
+   if (bearer_check_pending && !cell_busy)
+   {
+      bearer_check_pending = 0;
+      cell_busy = 1;
+      cgact_query_begin();
+      cell_send_command(CELL_POLL_PDP_ACTIVE_MSG, sizeof(CELL_POLL_PDP_ACTIVE_MSG));
+      set_command_timeout(1000 / CELL_TIMER_MS_PER_TICK);
+      cell_step = CELL_STEP_WAIT_BEARER_CGACT;
+      return;
+   }
+
    // Start new steady-state operations when the modem is free and connected
    if (cell_busy || !mqtt_connected)
       return;
@@ -1800,7 +1975,6 @@ void cell_update_state(void)
       incoming_message = 0;
       incoming_message_length = 0;
       mqtt_operation_awaiting_ack = MQTT_READ;
-      command_acked = command_nacked = 0;
 #ifdef USE_MQTT_SN
       cell_send_command(CELL_MQTTSN_READ_MSG, sizeof(CELL_MQTTSN_READ_MSG));
 #else
@@ -1836,7 +2010,6 @@ void cell_update_state(void)
    if (signal_quality_pending && valid_pdp)
    {
       signal_quality_pending = 0;
-      command_acked = command_nacked = 0;
       cell_send_command(CELL_GET_SIGNAL_QUALITY_MSG, sizeof(CELL_GET_SIGNAL_QUALITY_MSG));
       set_command_timeout(1000 / CELL_TIMER_MS_PER_TICK);
       cell_step = CELL_STEP_WAIT_SIG_QUAL_ONLY;
@@ -1847,7 +2020,8 @@ uint8_t cell_pending_events(void)
 {
    // Return whether there are any pending events to be handled
    return configure_modem || connectivity_changed || device_info_update || pending_messages ||
-          cell_alert_tx_count || onset_history_pending || cell_audio_tx_count || signal_quality_pending || (cell_step != CELL_STEP_IDLE);
+          cell_alert_tx_count || onset_history_pending || cell_audio_tx_count || signal_quality_pending ||
+          bearer_check_pending || publish_stall_pending || (cell_step != CELL_STEP_IDLE);
 }
 
 void cell_update_device_details(void)
@@ -1940,8 +2114,6 @@ uint8_t cell_at_cert_write_begin(const char *cmd, uint32_t cmd_len, uint32_t tim
 {
    // Send an AT+USECMNG=0,... command and block until the '>' data prompt is received
    mqtt_operation_awaiting_ack = MQTT_PUBLISH_BINARY;
-   prompt_received = 0;
-   command_acked = command_nacked = 0;
    cell_send_command((char*)cmd, cmd_len);
    set_command_timeout(timeout_ms / CELL_TIMER_MS_PER_TICK);
    while (!prompt_received && !command_nacked && !timed_out)
@@ -1957,7 +2129,6 @@ void cell_at_cert_write_data(const char *data, uint32_t len)
    // Send the raw PEM byte stream after the '>' prompt has been received
    mqtt_operation_awaiting_ack = MQTT_DONE;
    in_holdoff_period = 0;
-   command_acked = command_nacked = 0;
    cell_send_command((char*)data, len + 1);
 }
 
