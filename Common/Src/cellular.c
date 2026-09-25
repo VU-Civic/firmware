@@ -84,9 +84,11 @@
 #define CELL_POLL_PDP_ACTIVE_MSG          "AT+CGACT?\r"
 #define CELL_POLL_IP_ADDRESS_MSG          "AT+CGPADDR=" STRINGIZE(CELL_PDP_CONTEXT_ID) "\r"
 #define CELL_IP_ADDRESS_MSG               "+CGPADDR:"
+#define CELL_ATTACHED_RESPONSE_MSG        "+CGATT:"
 #define CELL_UNASSIGNED_IPV4_ADDRESS      "0.0.0.0"
 #define CELL_POLL_CGREG_MSG               "AT+CGREG?\r"
 #define CELL_POLL_CEREG_MSG               "AT+CEREG?\r"
+#define CELL_POLL_ATTACHED_MSG            "AT+CGATT?\r"
 #define CELL_POLL_COPS_MSG                "AT+COPS?\r"
 #define CELL_REPORT_REG_EVENTS_MSG        "AT+CMER=2,0,0,2,1\r"
 #define CELL_REPORT_REG_ERRORS_MSG        "AT+CGEREP=2,1\r"
@@ -203,6 +205,7 @@ typedef enum
 {
    CELL_STEP_IDLE = 0,
    CELL_STEP_WAIT_SIG_QUAL_ONLY,
+   CELL_STEP_WAIT_BEARER_ATTACH,
    CELL_STEP_WAIT_BEARER_CGACT,
    CELL_STEP_WAIT_BEARER_ADDR,
 #ifdef CELL_MQTT_USE_BINARY_PUBLISH
@@ -260,7 +263,7 @@ static volatile uint8_t cell_modem_available = 0, configure_modem = 0, mqtt_conn
 static volatile uint8_t valid_cgreg = 0, valid_cereg = 0, valid_pdp = 0, temperature_alert = 0, reading_imsi = 0;
 static volatile uint8_t cell_busy = 0, device_info_update = 0, mqtt_configured = 0, prompt_received = 0;
 static volatile uint8_t device_update_timer_count = 0, bad_network_conn_timer_count = 0, bad_pdp_timer_count = 0;
-static volatile uint8_t cgact_query_active = 0, cgact_context_active = 0, consecutive_publish_failures = 0;
+static volatile uint8_t cgact_query_active = 0, cgact_context_active = 0, consecutive_publish_failures = 0, gprs_attached = 0;
 static volatile uint8_t publish_stall_pending = 0, publish_stall_escalation = 0, bearer_check_pending = 0, bearer_check_timer_count = 0;
 static volatile uint8_t command_acked = 0, command_nacked = 0, timed_out = 0, in_holdoff_period = 0;
 static volatile uint8_t mqtt_connect_pending = 0, bad_mqtt_conn_timer_count = 0, mqtt_subscribed = 0;
@@ -1201,6 +1204,18 @@ static uint16_t cell_process_message(char* msg, uint16_t max_msg_len)
          }
       }
    }
+   else if ((max_msg_len >= (1 + sizeof(CELL_ATTACHED_RESPONSE_MSG))) && (memcmp(msg, CELL_ATTACHED_RESPONSE_MSG, sizeof(CELL_ATTACHED_RESPONSE_MSG) - 1) == 0))
+   {
+      // Deliberate redundancy against a missed "+CGEV"
+      char *field = find_start_of_message(msg, sizeof(CELL_ATTACHED_RESPONSE_MSG) - 1, &max_msg_len);
+      gprs_attached = (atoi(field) != 0);
+      msg = find_end_of_message(field, &max_msg_len) + 1;
+      if (!gprs_attached && valid_pdp)
+      {
+         valid_pdp = 0;
+         connectivity_changed = 1;
+      }
+   }
    else if ((max_msg_len >= (1 + sizeof(CELL_IP_ADDRESS_MSG))) && (memcmp(msg, CELL_IP_ADDRESS_MSG, sizeof(CELL_IP_ADDRESS_MSG) - 1) == 0))
    {
       char *field = find_start_of_message(msg, sizeof(CELL_IP_ADDRESS_MSG) - 1, &max_msg_len);
@@ -1829,6 +1844,17 @@ void cell_update_state(void)
             cell_step = CELL_STEP_IDLE;
          return;
 
+      case CELL_STEP_WAIT_BEARER_ATTACH:
+         // Attachment answered; ask what the context itself claims
+         if (command_acked || command_nacked || timed_out)
+         {
+            cgact_query_begin();
+            cell_send_command(CELL_POLL_PDP_ACTIVE_MSG, sizeof(CELL_POLL_PDP_ACTIVE_MSG));
+            set_command_timeout(1000 / CELL_TIMER_MS_PER_TICK);
+            cell_step = CELL_STEP_WAIT_BEARER_CGACT;
+         }
+         return;
+
       case CELL_STEP_WAIT_BEARER_CGACT:
       {
          // Resolve the context listing, then ask what address that context actually holds
@@ -1949,10 +1975,9 @@ void cell_update_state(void)
    {
       bearer_check_pending = 0;
       cell_busy = 1;
-      cgact_query_begin();
-      cell_send_command(CELL_POLL_PDP_ACTIVE_MSG, sizeof(CELL_POLL_PDP_ACTIVE_MSG));
+      cell_send_command(CELL_POLL_ATTACHED_MSG, sizeof(CELL_POLL_ATTACHED_MSG));
       set_command_timeout(1000 / CELL_TIMER_MS_PER_TICK);
-      cell_step = CELL_STEP_WAIT_BEARER_CGACT;
+      cell_step = CELL_STEP_WAIT_BEARER_ATTACH;
       return;
    }
 
