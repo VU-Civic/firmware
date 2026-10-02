@@ -79,6 +79,7 @@
 #define AI_FIRMWARE_VERSION_LENGTH           8
 #define AI_NUM_CLASSES                       1
 #define AI_COMMS_TIMEOUT_SECONDS             10
+#define AI_DISABLE_SPIN_LIMIT                100000U
 
 #define MAX_NUM_EVENTS_PER_ALERT             (2 * AUDIO_NUM_DMAS_PER_CLIP)
 

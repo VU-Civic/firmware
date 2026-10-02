@@ -203,7 +203,7 @@ void ai_comms_init(void)
 
    // Initialize the SPI2 peripheral
    CLEAR_BIT(SPI2->CR1, SPI_CR1_SPE);
-   while (READ_BIT(SPI2->CR1, SPI_CR1_SPE));
+   for (uint32_t spins = 0; READ_BIT(SPI2->CR1, SPI_CR1_SPE) && (spins < AI_DISABLE_SPIN_LIMIT); ++spins);
    uint32_t crc_length = SPI2->CFG1 & SPI_CFG1_CRCSIZE;
    MODIFY_REG(SPI2->CR1, SPI_CR1_MASRX, SPI_MASTER_RX_AUTOSUSP_DISABLE);
    WRITE_REG(SPI2->CFG1, (SPI_BAUDRATEPRESCALER_2 | crc_length | SPI_FIFO_THRESHOLD_04DATA | SPI_DATASIZE_32BIT));
@@ -212,7 +212,7 @@ void ai_comms_init(void)
 
    // Initialize DMA2 Stream2 for SPI2 TX
    CLEAR_BIT(DMA2_Stream2->CR, DMA_SxCR_EN);
-   while (READ_BIT(DMA2_Stream2->CR, DMA_SxCR_EN));
+   for (uint32_t spins = 0; READ_BIT(DMA2_Stream2->CR, DMA_SxCR_EN) && (spins < AI_DISABLE_SPIN_LIMIT); ++spins);
    MODIFY_REG(DMA2_Stream2->CR,
              (DMA_SxCR_MBURST | DMA_SxCR_PBURST | DMA_SxCR_PL | DMA_SxCR_MSIZE | DMA_SxCR_PSIZE | DMA_SxCR_MINC | DMA_SxCR_PINC | DMA_SxCR_CIRC | DMA_SxCR_DIR | DMA_SxCR_CT | DMA_SxCR_DBM),
              (DMA_MEMORY_TO_PERIPH | DMA_MINC_ENABLE | DMA_PDATAALIGN_WORD | DMA_MDATAALIGN_WORD | DMA_PRIORITY_HIGH | DMA_MBURST_INC4 | DMA_PBURST_INC4));
@@ -228,7 +228,7 @@ void ai_comms_init(void)
 
    // Initialize DMA2 Stream0 for I2C3_RX
    CLEAR_BIT(DMA2_Stream0->CR, DMA_SxCR_EN);
-   while (READ_BIT(DMA2_Stream0->CR, DMA_SxCR_EN));
+   for (uint32_t spins = 0; READ_BIT(DMA2_Stream0->CR, DMA_SxCR_EN) && (spins < AI_DISABLE_SPIN_LIMIT); ++spins);
    MODIFY_REG(DMA2_Stream0->CR,
              (DMA_SxCR_MBURST | DMA_SxCR_PBURST | DMA_SxCR_PL | DMA_SxCR_MSIZE | DMA_SxCR_PSIZE | DMA_SxCR_MINC | DMA_SxCR_PINC | DMA_SxCR_CIRC | DMA_SxCR_DIR | DMA_SxCR_CT | DMA_SxCR_DBM),
              (DMA_PERIPH_TO_MEMORY | DMA_MINC_ENABLE | DMA_PDATAALIGN_BYTE | DMA_MDATAALIGN_BYTE | DMA_PRIORITY_LOW | DMA_MBURST_SINGLE | DMA_PBURST_SINGLE));

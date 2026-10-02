@@ -395,3 +395,27 @@ void cpu_feed_watchdog(void)
    WRITE_REG(IWDG2->KR, IWDG_KEY_RELOAD);
 #endif
 }
+
+void HAL_Delay(uint32_t Delay)
+{
+   // Override the weak HAL implementation to use SYSTICK when needed
+   if (READ_BIT(SysTick->CTRL, SysTick_CTRL_TICKINT_Msk))
+   {
+      const uint32_t started = HAL_GetTick();
+      while ((HAL_GetTick() - started) < Delay)
+         cpu_feed_watchdog();
+      return;
+   }
+
+   // The cycle counter wraps roughly every eighteen seconds at this clock
+   const uint32_t cycles_per_millisecond = SystemCoreClock / 1000U;
+   while (Delay)
+   {
+      const uint32_t chunk = (Delay > 1000U) ? 1000U : Delay;
+      const uint32_t target = chunk * cycles_per_millisecond;
+      const uint32_t started = DWT->CYCCNT;
+      while ((DWT->CYCCNT - started) < target)
+         cpu_feed_watchdog();
+      Delay -= chunk;
+   }
+}
